@@ -1,8 +1,13 @@
+/* src/app/globals.css */
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f6f7fb; /* 画面全体の背景（スマホ枠をやめて全幅に） */
+  --foreground: #111827;
+
+  /* 任意：共通の最大幅（AppShell側が未使用でも使えるように） */
+  --container-max: 1200px;
+  --container-pad: 16px;
 }
 
 @theme inline {
@@ -12,15 +17,45 @@
   --font-mono: var(--font-geist-mono);
 }
 
+/* ダークモードでも “アプリっぽい” 背景にする */
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0b1220;
+    --foreground: #e5e7eb;
   }
 }
 
+html,
 body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
   background: var(--background);
   color: var(--foreground);
+
+  /* 既存のフォント指定は維持（必要なら後で Geist に寄せる） */
   font-family: Arial, Helvetica, sans-serif;
+
+  /* ✅ 固定幅/中央固定を作らない（全幅のベース） */
 }
+
+/* 画像のはみ出し防止（スマホ/PC両対応） */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* aタグの見た目を崩しにくくする（必要最低限） */
+a {
+  color: inherit;
+}
+
+/*
+  ✅ レイアウトのgrid（PC=2列/タブレット縮小/スマホ1列）は
+  AppShell.tsx 側で担う方針です。
+  globals.css に “固定枠” や “中央寄せコンテナ” を置かないことで
+  全ページがレスポンシブ前提になります。
+*/
