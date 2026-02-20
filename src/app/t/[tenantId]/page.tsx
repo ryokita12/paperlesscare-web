@@ -31,12 +31,23 @@ export default function TenantHome() {
   const nextPath = useMemo(() => `/t/${tenantId || "aaaa"}`, [tenantId]);
 
   useEffect(() => {
-    // revoke old object URL to avoid memory leak
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
+    const key = `paperlesscare_capture_v1_${tenantId}`;
+    const dataUrl = typeof window !== "undefined" ? sessionStorage.getItem(key) : null;
+    if (!dataUrl) return;
+
+    // 一度読み出したら消す（戻る/リロードの二重反映防止）
+    sessionStorage.removeItem(key);
+
+    (async () => {
+      // dataURL → Blob → File
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const file = new File([blob], `capture_${Date.now()}.jpg`, { type: "image/jpeg" });
+
+      onFileSelected(file);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [tenantId]);
 
   useEffect(() => {
     if (!selectedFile) {
@@ -69,6 +80,19 @@ export default function TenantHome() {
 
   const onPickClick = () => {
     if (busy) return;
+
+    // スマホ（coarse pointer）ならガイド付きカメラ画面へ
+    const isMobile =
+      typeof window !== "undefined" &&
+      (window.matchMedia?.("(pointer: coarse)")?.matches ||
+        /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+
+    if (isMobile) {
+      router.push(`/t/${tenantId}/capture?next=${encodeURIComponent(`/t/${tenantId}`)}`);
+      return;
+    }
+
+    // PCは従来通り
     fileInputRef.current?.click();
   };
 
