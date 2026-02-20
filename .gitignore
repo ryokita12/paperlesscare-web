@@ -41,7 +41,7 @@ yarn-error.log*
 next-env.d.ts
 
 # google cloud sdk
-google-cloud-sdk/
+**/google-cloud-sdk/
 
 # firebase local
 .firebase/
