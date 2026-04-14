@@ -218,9 +218,9 @@ export default function TenantHome() {
       {/* メイン：取込 & OCR */}
       <div className="rounded-2xl border bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="min-w-0 flex-1">
             <div className="text-base font-semibold">受給者証取込＆送信</div>
-            <div className="mt-1 text-xs opacity-70 break-all">
+            <div className="mt-1 w-full min-w-0 text-xs opacity-70 break-all">
               tenant: {tenantId} / uid: {user.uid}
             </div>
           </div>
@@ -306,7 +306,7 @@ export default function TenantHome() {
             {previewUrl && (
               <div className="mt-4">
                 <div className="text-xs opacity-70">サムネイル（内容確認）</div>
-                <img src={previewUrl} alt="preview" className="mt-2 w-full rounded-xl border" />
+                <img src={previewUrl} alt="preview" className="mt-2 block w-full max-w-full rounded-xl border" />
               </div>
             )}
           </div>
