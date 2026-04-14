@@ -1,106 +1,175 @@
-// src/app/t/[tenantId]/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ref, uploadBytes } from "firebase/storage";
 import { httpsCallable } from "firebase/functions";
-import { useRouter, useParams } from "next/navigation";
+import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { storage, functions } from "@/lib/firebase";
 import { useRequireAuth } from "@/lib/auth";
 
 type OcrResponse = { text?: string };
 
+type FormDataType = {
+  number: string;
+  address: string;
+  name: string;
+  birthday: string;
+  childName: string;
+  childBirthday: string;
+  disabilityType: string;
+  issueDate: string;
+  cityName: string;
+};
+
+type CertPage = {
+  selectedFile: File | null;
+  previewUrl: string;
+  ocrText: string;
+  formData: FormDataType;
+};
+
+const PAGE_COUNT = 6;
+const STORAGE_KEY_PREFIX = "paperlesscare_capture_v1_";
+
+const emptyFormData = (): FormDataType => ({
+  number: "",
+  address: "",
+  name: "",
+  birthday: "",
+  childName: "",
+  childBirthday: "",
+  disabilityType: "",
+  issueDate: "",
+  cityName: "",
+});
+
+const createEmptyPage = (): CertPage => ({
+  selectedFile: null,
+  previewUrl: "",
+  ocrText: "",
+  formData: emptyFormData(),
+});
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 export default function TenantHome() {
   const router = useRouter();
-
   const routeParams = useParams<{ tenantId: string }>();
-  const tenantId = routeParams?.tenantId ?? "";
+  const searchParams = useSearchParams();
 
+  const tenantId = routeParams?.tenantId ?? "";
   const { user, loading } = useRequireAuth();
+
+  const initialPage = clamp(
+    Number(searchParams.get("page") || "1") - 1,
+    0,
+    PAGE_COUNT - 1
+  );
 
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
-
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [ocrText, setOcrText] = useState("");
+  const [activePageIndex, setActivePageIndex] = useState(initialPage);
+  const [pages, setPages] = useState<CertPage[]>(() =>
+    Array.from({ length: PAGE_COUNT }, () => createEmptyPage())
+  );
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const nextPath = useMemo(() => `/t/${tenantId || "aaaa"}`, [tenantId]);
+  const currentPage = pages[activePageIndex];
+
+  const updateCurrentPage = (updater: (page: CertPage) => CertPage) => {
+    setPages((prev) =>
+      prev.map((page, index) => (index === activePageIndex ? updater(page) : page))
+    );
+  };
 
   useEffect(() => {
-    const key = `paperlesscare_capture_v1_${tenantId}`;
-    const dataUrl = typeof window !== "undefined" ? sessionStorage.getItem(key) : null;
+    setActivePageIndex(initialPage);
+  }, [initialPage]);
+
+  useEffect(() => {
+    const storageKey = `${STORAGE_KEY_PREFIX}${tenantId}`;
+    const dataUrl =
+      typeof window !== "undefined" ? sessionStorage.getItem(storageKey) : null;
     if (!dataUrl) return;
 
-    // 一度読み出したら消す（戻る/リロードの二重反映防止）
-    sessionStorage.removeItem(key);
+    sessionStorage.removeItem(storageKey);
 
     (async () => {
-      // dataURL → Blob → File
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const file = new File([blob], `capture_${Date.now()}.jpg`, { type: "image/jpeg" });
-
-      onFileSelected(file);
+      const file = new File([blob], `capture_${Date.now()}.jpg`, {
+        type: "image/jpeg",
+      });
+      onFileSelected(file, dataUrl);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
+  }, [tenantId, activePageIndex]);
 
   useEffect(() => {
-    if (!selectedFile) {
-      if (previewUrl) {
-        URL.revokeObjectURL(previewUrl);
-        setPreviewUrl("");
-      }
-      return;
-    }
-
-    // set preview
-    if (previewUrl) URL.revokeObjectURL(previewUrl);
-    const url = URL.createObjectURL(selectedFile);
-    setPreviewUrl(url);
-
-    // cleanup when selectedFile changes
     return () => {
-      URL.revokeObjectURL(url);
+      pages.forEach((page) => {
+        if (page.previewUrl.startsWith("blob:")) {
+          URL.revokeObjectURL(page.previewUrl);
+        }
+      });
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFile]);
+  }, [pages]);
 
   const resetSelection = () => {
-    setSelectedFile(null);
+    if (currentPage.previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(currentPage.previewUrl);
+    }
+
+    updateCurrentPage(() => createEmptyPage());
     setStatus("");
-    setOcrText("");
-    // reset input value so same file can be selected again
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const onPickClick = () => {
     if (busy) return;
 
-    // スマホ（coarse pointer）ならガイド付きカメラ画面へ
     const isMobile =
       typeof window !== "undefined" &&
       (window.matchMedia?.("(pointer: coarse)")?.matches ||
         /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
 
     if (isMobile) {
-      router.push(`/t/${tenantId}/capture?next=${encodeURIComponent(`/t/${tenantId}`)}`);
+      router.push(
+        `/t/${tenantId}/capture?next=${encodeURIComponent(
+          `/t/${tenantId}?page=${activePageIndex + 1}`
+        )}`
+      );
       return;
     }
 
-    // PCは従来通り
     fileInputRef.current?.click();
   };
 
-  const onFileSelected = (file: File | null) => {
+  const onFileSelected = (file: File | null, previewOverride?: string) => {
     if (!file) return;
-    setSelectedFile(file);
-    setStatus("✅ 画像を選択しました。内容を確認して「取込開始」を押してください。");
-    setOcrText("");
+
+    const nextPreviewUrl = previewOverride || URL.createObjectURL(file);
+
+    if (currentPage.previewUrl && currentPage.previewUrl.startsWith("blob:")) {
+      URL.revokeObjectURL(currentPage.previewUrl);
+    }
+
+    updateCurrentPage((page) => ({
+      ...page,
+      selectedFile: file,
+      previewUrl: nextPreviewUrl,
+      ocrText: "",
+      formData: emptyFormData(),
+    }));
+
+    setStatus(
+      `✅ ${activePageIndex + 1}/${PAGE_COUNT} の画像を選択しました。内容を確認して「取込開始」を押してください。`
+    );
   };
 
   const onPasteImage = (e: React.ClipboardEvent<HTMLDivElement>) => {
@@ -120,22 +189,28 @@ export default function TenantHome() {
   };
 
   const startImport = async () => {
-    if (!selectedFile || !user) return;
+    if (!currentPage.selectedFile || !user) return;
 
     setBusy(true);
-    setStatus("Uploading...");
-    setOcrText("");
+    setStatus(`${activePageIndex + 1}/${PAGE_COUNT} をアップロード中...`);
+
+    updateCurrentPage((page) => ({
+      ...page,
+      ocrText: "",
+      formData: emptyFormData(),
+    }));
 
     try {
       const uid = user.uid;
-      const safeName = selectedFile.name.replace(/[^\w.\-]/g, "_");
+      const safeName = currentPage.selectedFile.name.replace(/[^\w.\-]/g, "_");
       const path = `uploads/${uid}/${Date.now()}_${safeName}`;
       const storageRef = ref(storage, path);
 
-      await uploadBytes(storageRef, selectedFile, {
-        contentType: selectedFile.type || "image/jpeg",
+      await uploadBytes(storageRef, currentPage.selectedFile, {
+        contentType: currentPage.selectedFile.type || "image/jpeg",
       });
-      setStatus("✅ Uploaded. OCR calling...");
+
+      setStatus(`✅ ${activePageIndex + 1}/${PAGE_COUNT} をOCR中...`);
 
       const ocrFromStoragePath = httpsCallable<{ storagePath: string }, OcrResponse>(
         functions,
@@ -145,13 +220,52 @@ export default function TenantHome() {
       const res = await ocrFromStoragePath({ storagePath: path });
       const text = res.data?.text ?? "";
 
-      setOcrText(text);
-      setStatus(text ? "✅ OCR done" : "⚠️ OCR done (text empty)");
+      const parsed: FormDataType = {
+        number: text.match(/\d{10}/)?.[0] || "",
+        address:
+          text.match(/居住地\s*([\s\S]*?)\s*フリガナ/)?.[1]?.trim() ||
+          text.match(/住所\s*([\s\S]*?)\s*フリガナ/)?.[1]?.trim() ||
+          "",
+        name:
+          text.match(/支給決定障害者等[\s\S]*?氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() ||
+          text.match(/氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() ||
+          "",
+        birthday:
+          text.match(/支給決定障害者等[\s\S]*?((昭和|平成|令和)[^\n]*?日)/)?.[1] ||
+          text.match(/(昭和|平成|令和)[^\n]*?日/)?.[0] ||
+          "",
+        childName:
+          text.match(/児童[\s\S]*?氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() || "",
+        childBirthday:
+          text.match(/児童[\s\S]*?((昭和|平成|令和)[^\n]*?日)/)?.[1] || "",
+        disabilityType: text.match(/障害種別\s*([^\n]+)/)?.[1]?.trim() || "",
+        issueDate: text.match(/交付年月日\s*([^\n]+)/)?.[1]?.trim() || "",
+        cityName:
+          text.match(/支給市区町村名[\s\S]*?([^\n]+市[^\n]*|[^\n]+区[^\n]*|[^\n]+町[^\n]*|[^\n]+村[^\n]*)/)?.[1]?.trim() ||
+          "",
+      };
+
+      updateCurrentPage((page) => ({
+        ...page,
+        ocrText: text,
+        formData: parsed,
+      }));
+
+      setStatus(
+        text
+          ? `✅ ${activePageIndex + 1}/${PAGE_COUNT} のOCRが完了しました`
+          : `⚠️ ${activePageIndex + 1}/${PAGE_COUNT} のOCR結果が空でした`
+      );
     } catch (e: any) {
       setStatus(`❌ Error: ${e.code || ""} ${e.message}`);
     } finally {
       setBusy(false);
     }
+  };
+
+  const scrollToUpload = () => {
+    const el = document.getElementById("upload-section");
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   if (loading) {
@@ -178,16 +292,10 @@ export default function TenantHome() {
     );
   }
 
-  const scrollToUpload = () => {
-    const el = document.getElementById("upload-section");
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
-  const canStart = !!selectedFile && !busy;
+  const canStart = !!currentPage.selectedFile && !busy;
 
   return (
     <div className="space-y-6">
-      {/* ✅ モバイルだけ：3枚カード（md以上は非表示） */}
       <div className="grid gap-4 md:hidden">
         <button
           type="button"
@@ -195,7 +303,9 @@ export default function TenantHome() {
           className="text-left rounded-2xl border bg-white p-5 hover:bg-zinc-50 transition"
         >
           <div className="text-sm font-semibold">受給者証取込＆送信</div>
-          <div className="mt-1 text-xs opacity-70">画像アップロード → OCR → 内容確認</div>
+          <div className="mt-1 text-xs opacity-70">
+            6枚綴りの受給者証をページごとに登録します
+          </div>
         </button>
 
         <Link
@@ -215,8 +325,27 @@ export default function TenantHome() {
         </Link>
       </div>
 
-      {/* メイン：取込 & OCR */}
       <div className="rounded-2xl border bg-white p-5">
+        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+          {pages.map((page, index) => {
+            const done = !!page.previewUrl;
+            const active = index === activePageIndex;
+
+            return (
+              <button
+                key={index}
+                type="button"
+                onClick={() => setActivePageIndex(index)}
+                className={`shrink-0 rounded-xl border px-4 py-2 text-sm transition ${
+                  active ? "bg-black text-white border-black" : "bg-white text-black"
+                }`}
+              >
+                {index + 1}/6 {done ? "●" : ""}
+              </button>
+            );
+          })}
+        </div>
+
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="text-base font-semibold">受給者証取込＆送信</div>
@@ -225,7 +354,6 @@ export default function TenantHome() {
             </div>
           </div>
 
-          {/* ✅ PC/タブレットはサイドバーに導線があるので、ここはモバイルだけ表示 */}
           <div className="flex items-center gap-2 md:hidden">
             <Link
               className="rounded-xl border px-3 py-2 text-sm hover:bg-zinc-50 transition"
@@ -238,12 +366,13 @@ export default function TenantHome() {
 
         <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2">
           <div className="rounded-2xl border p-5">
-            <div className="text-sm font-semibold">画像を選択</div>
+            <div className="text-sm font-semibold">
+              受給者証画像（{activePageIndex + 1}/6）
+            </div>
             <div className="mt-1 text-xs opacity-70">
-              ボタンで選択 or 画像を貼り付け → サムネ確認 → 「取込開始」
+              6枚綴りのうち現在のページ画像を登録します
             </div>
 
-            {/* ✅ input は隠して、ボタンでわかりやすく */}
             <input
               ref={fileInputRef}
               type="file"
@@ -291,37 +420,136 @@ export default function TenantHome() {
               </div>
 
               <div className="mt-2 text-xs opacity-70">
-                {selectedFile ? (
+                {currentPage.selectedFile ? (
                   <>
-                    選択中：<span className="break-all">{selectedFile.name}</span>
+                    選択中：
+                    <span className="break-all">{currentPage.selectedFile.name}</span>
                   </>
                 ) : (
-                  <>ここをタップしてから画像を貼り付け（ペースト）もできます</>
+                  <>このページの画像を選択してください</>
                 )}
               </div>
             </div>
 
             <div className="mt-4 text-sm">{busy ? "処理中…" : status}</div>
 
-            {previewUrl && (
+            {currentPage.previewUrl && (
               <div className="mt-4">
-                <div className="text-xs opacity-70">サムネイル（内容確認）</div>
-                <img src={previewUrl} alt="preview" className="mt-2 block w-full max-w-full rounded-xl border" />
+                <div className="text-xs opacity-70">
+                  サムネイル（{activePageIndex + 1}/6）
+                </div>
+                <img
+                  src={currentPage.previewUrl}
+                  alt="preview"
+                  className="mt-2 block w-full max-w-full rounded-xl border"
+                />
               </div>
             )}
           </div>
 
           <div className="rounded-2xl border p-5">
-            <div className="text-sm font-semibold">OCR結果</div>
-            <div className="mt-1 text-xs opacity-70">必要に応じてコピーしてご利用ください</div>
+            <div className="text-sm font-semibold">
+              OCR結果（{activePageIndex + 1}/6）
+            </div>
+            <div className="mt-1 text-xs opacity-70">
+              受給者証レイアウトに合わせて表示
+            </div>
 
-            <textarea
-              value={ocrText}
-              readOnly
-              placeholder="取込開始を押すと OCR text が表示されます"
-              className="mt-4 w-full h-64 text-xs border rounded-xl p-3"
-            />
+            <div className="mt-4 overflow-x-auto">
+              <div className="w-full max-w-[520px] border text-[10px] leading-5 mx-auto">
+                <div className="border-b px-4 py-3 text-center text-[18px]">
+                  障害福祉サービス受給者証（Ⅰ）
+                </div>
+
+                <div className="grid grid-cols-[140px_1fr] border-b">
+                  <div className="border-r px-3 py-3 text-center">受給者番号</div>
+                  <div className="px-3 py-3">{currentPage.formData.number}</div>
+                </div>
+
+                <div className="grid grid-cols-[30px_110px_1fr] border-b min-h-[220px]">
+                  <div className="border-r flex items-center justify-center [writing-mode:vertical-rl] text-center px-2">
+                    支給決定障害者等
+                  </div>
+                  <div className="border-r grid grid-rows-[56px_56px_56px_1fr]">
+                    <div className="border-b flex items-center justify-center">居住地</div>
+                    <div className="border-b flex items-center justify-center">フリガナ</div>
+                    <div className="border-b flex items-center justify-center">氏名</div>
+                    <div className="flex items-center justify-center">生年月日</div>
+                  </div>
+                  <div className="grid grid-rows-[56px_56px_56px_1fr]">
+                    <div className="border-b px-3 py-2 whitespace-pre-wrap">
+                      {currentPage.formData.address}
+                    </div>
+                    <div className="border-b px-3 py-2"></div>
+                    <div className="border-b px-3 py-2">{currentPage.formData.name}</div>
+                    <div className="px-3 py-2">{currentPage.formData.birthday}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-[30px_110px_1fr] border-b min-h-[170px]">
+                  <div className="border-r flex items-center justify-center [writing-mode:vertical-rl] text-center px-2">
+                    児童
+                  </div>
+                  <div className="border-r grid grid-rows-[56px_56px_1fr]">
+                    <div className="border-b flex items-center justify-center">フリガナ</div>
+                    <div className="border-b flex items-center justify-center">氏名</div>
+                    <div className="flex items-center justify-center">生年月日</div>
+                  </div>
+                  <div className="grid grid-rows-[56px_56px_1fr]">
+                    <div className="border-b px-3 py-2"></div>
+                    <div className="border-b px-3 py-2">
+                      {currentPage.formData.childName}
+                    </div>
+                    <div className="px-3 py-2">{currentPage.formData.childBirthday}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-[140px_1fr] border-b">
+                  <div className="border-r px-3 py-3 text-center">障害種別</div>
+                  <div className="px-3 py-3">{currentPage.formData.disabilityType}</div>
+                </div>
+
+                <div className="grid grid-cols-[140px_1fr] border-b">
+                  <div className="border-r px-3 py-3 text-center">交付年月日</div>
+                  <div className="px-3 py-3">{currentPage.formData.issueDate}</div>
+                </div>
+
+                <div className="grid grid-cols-[140px_1fr] min-h-[140px]">
+                  <div className="border-r px-3 py-3 text-center">
+                    <div>支給市区町村名</div>
+                    <div className="mt-6">及び印</div>
+                  </div>
+                  <div className="px-3 py-3">{currentPage.formData.cityName}</div>
+                </div>
+              </div>
+            </div>
           </div>
+        </div>
+
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setActivePageIndex((prev) => Math.max(0, prev - 1))}
+            disabled={activePageIndex === 0}
+            className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
+          >
+            前のページ
+          </button>
+
+          <div className="text-xs opacity-70">
+            現在 {activePageIndex + 1} / {PAGE_COUNT}
+          </div>
+
+          <button
+            type="button"
+            onClick={() =>
+              setActivePageIndex((prev) => Math.min(PAGE_COUNT - 1, prev + 1))
+            }
+            disabled={activePageIndex === PAGE_COUNT - 1}
+            className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
+          >
+            次のページ
+          </button>
         </div>
       </div>
     </div>

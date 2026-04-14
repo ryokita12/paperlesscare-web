@@ -101,11 +101,34 @@ export default function CapturePage() {
     const vh = videoEl.videoHeight;
     if (!vw || !vh) return;
 
-    // guideRect を videoRect 基準の割合に変換
-    const relX = (gr.left - vr.left) / vr.width;
-    const relY = (gr.top - vr.top) / vr.height;
-    const relW = gr.width / vr.width;
-    const relH = gr.height / vr.height;
+    // object-contain 時の「実際に映像が見えている領域」を計算
+    const videoAspect = vw / vh;
+    const boxAspect = vr.width / vr.height;
+
+    let renderW = 0;
+    let renderH = 0;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (videoAspect > boxAspect) {
+      // 横が基準。上下に余白
+      renderW = vr.width;
+      renderH = vr.width / videoAspect;
+      offsetX = 0;
+      offsetY = (vr.height - renderH) / 2;
+    } else {
+      // 縦が基準。左右に余白
+      renderH = vr.height;
+      renderW = vr.height * videoAspect;
+      offsetX = (vr.width - renderW) / 2;
+      offsetY = 0;
+    }
+
+    // guide の位置を、実際の映像表示領域 기준で相対化
+    const relX = (gr.left - (vr.left + offsetX)) / renderW;
+    const relY = (gr.top - (vr.top + offsetY)) / renderH;
+    const relW = gr.width / renderW;
+    const relH = gr.height / renderH;
 
     // 元動画座標（px）
     let sx = relX * vw;
@@ -193,7 +216,7 @@ export default function CapturePage() {
           ref={videoRef}
           playsInline
           muted
-          className="w-full h-[calc(100dvh-160px)] object-cover"
+          className="w-full h-[calc(100dvh-160px)] object-contain bg-black"
         />
 
         {/* オーバーレイ（枠外を暗く + 枠線） */}
@@ -201,7 +224,7 @@ export default function CapturePage() {
           {/* 縦長：aspect は受給者証に合わせて調整（まずは 3:4） */}
           <div
             id="guide"
-            className="relative w-[78vw] max-w-[420px] aspect-[3/4] rounded-2xl"
+            className="relative w-[82vw] max-w-[430px] aspect-[210/297] rounded-2xl"
           >
             {/* 枠線 */}
             <div className="absolute inset-0 rounded-2xl border-4 border-white/90" />
@@ -211,9 +234,17 @@ export default function CapturePage() {
             <div className="absolute -bottom-1 -left-1 h-6 w-6 border-l-4 border-b-4 border-white" />
             <div className="absolute -bottom-1 -right-1 h-6 w-6 border-r-4 border-b-4 border-white" />
 
+            {/* 内側補助線 */}
+            <div className="absolute inset-0 rounded-2xl overflow-hidden">
+              <div className="absolute left-0 right-0 top-[8%] border-t border-white/30" />
+              <div className="absolute left-0 right-0 top-[16%] border-t border-white/20" />
+              <div className="absolute left-0 right-0 top-[48%] border-t border-white/20" />
+              <div className="absolute left-0 right-0 top-[70%] border-t border-white/20" />
+            </div>
+
             {/* ガイド文 */}
             <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 text-xs opacity-80 whitespace-nowrap">
-              反射・影・斜めを避けて、枠いっぱいに合わせてください
+              受給者証の四辺を枠に合わせてください
             </div>
           </div>
 
@@ -222,7 +253,7 @@ export default function CapturePage() {
             <div className="absolute inset-0 bg-black/55" />
             {/* 透明抜きは擬似的に“中央だけ明るく”するため、guide の上に透明板を置く */}
             <div
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[78vw] max-w-[420px] aspect-[3/4] rounded-2xl"
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[82vw] max-w-[430px] aspect-[210/297] rounded-2xl"
               style={{ background: "transparent" }}
             />
           </div>
@@ -231,7 +262,7 @@ export default function CapturePage() {
         {/* 撮影後プレビュー（小さく） */}
         {capturedUrl ? (
           <div className="absolute top-3 left-3 w-24 h-32 rounded-xl overflow-hidden border border-white/40">
-            <img src={capturedUrl} alt="captured" className="w-full h-full object-cover" />
+            <img src={capturedUrl} alt="captured" className="w-full h-full object-contain bg-black" />
           </div>
         ) : null}
       </div>
