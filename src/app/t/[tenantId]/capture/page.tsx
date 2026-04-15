@@ -227,19 +227,19 @@ export default function CapturePage() {
             className="relative w-[82vw] max-w-[430px] aspect-[210/297] rounded-2xl"
           >
             {/* 枠線 */}
-            <div className="absolute inset-0 rounded-2xl border-[6px] border-blue-400" />
+            <div className="absolute inset-0 rounded-2xl border-[6px] border-lime-400" />
             {/* 角の強調（任意） */}
-            <div className="absolute -top-1 -left-1 h-7 w-7 border-l-[5px] border-t-[5px] border-blue-400" />
-            <div className="absolute -top-1 -right-1 h-7 w-7 border-r-[5px] border-t-[5px] border-blue-400" />
-            <div className="absolute -bottom-1 -left-1 h-7 w-7 border-l-[5px] border-b-[5px] border-blue-400" />
-            <div className="absolute -bottom-1 -right-1 h-7 w-7 border-r-[5px] border-b-[5px] border-blue-400" />
+            <div className="absolute -top-1 -left-1 h-7 w-7 border-l-[5px] border-t-[5px] border-lime-400" />
+            <div className="absolute -top-1 -right-1 h-7 w-7 border-r-[5px] border-t-[5px] border-lime-400" />
+            <div className="absolute -bottom-1 -left-1 h-7 w-7 border-l-[5px] border-b-[5px] border-lime-400" />
+            <div className="absolute -bottom-1 -right-1 h-7 w-7 border-r-[5px] border-b-[5px] border-lime-400" />
 
             {/* 内側補助線 */}
             <div className="absolute inset-0 rounded-2xl overflow-hidden">
-              <div className="absolute left-0 right-0 top-[8%] border-t border-blue-400/40" />
-              <div className="absolute left-0 right-0 top-[16%] border-t border-blue-400/30" />
-              <div className="absolute left-0 right-0 top-[48%] border-t border-blue-400/30" />
-              <div className="absolute left-0 right-0 top-[70%] border-t border-blue-400/30" />
+              <div className="absolute left-0 right-0 top-[8%] border-t-2 border-lime-400/80" />
+              <div className="absolute left-0 right-0 top-[16%] border-t-2 border-lime-400/70" />
+              <div className="absolute left-0 right-0 top-[48%] border-t-2 border-lime-400/70" />
+              <div className="absolute left-0 right-0 top-[70%] border-t-2 border-lime-400/70" />
             </div>
 
             {/* ガイド文 */}
