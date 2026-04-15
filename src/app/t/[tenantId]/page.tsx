@@ -364,8 +364,8 @@ export default function TenantHome() {
           </div>
         </div>
 
-        <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border p-5">
+        <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2 min-w-0">
+          <div className="min-w-0 rounded-2xl border p-5">
             <div className="text-sm font-semibold">
               受給者証画像（{activePageIndex + 1}/6）
             </div>
@@ -447,7 +447,7 @@ export default function TenantHome() {
             )}
           </div>
 
-          <div className="rounded-2xl border p-5">
+          <div className="min-w-0 rounded-2xl border p-5">
             <div className="text-sm font-semibold">
               OCR結果（{activePageIndex + 1}/6）
             </div>
@@ -455,7 +455,7 @@ export default function TenantHome() {
               受給者証レイアウトに合わせて表示
             </div>
 
-            <div className="mt-4 overflow-x-auto">
+            <div className="mt-4 max-w-full overflow-x-auto">
               <div className="w-full max-w-[520px] border text-[10px] leading-5 mx-auto">
                 <div className="border-b px-4 py-3 text-center text-[18px]">
                   障害福祉サービス受給者証（Ⅰ）
