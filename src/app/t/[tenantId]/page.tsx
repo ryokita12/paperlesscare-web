@@ -279,7 +279,7 @@ export default function TenantHome() {
   if (!user) {
     return (
       <div className="space-y-4">
-        <div className="rounded-2xl border bg-white p-5">
+        <div className="rounded-2xl border bg-white p-5 w-full max-w-full overflow-hidden">
           <div className="text-sm">ログインしてください</div>
           <button
             className="mt-4 w-full rounded-xl border px-3 py-2 text-sm"
@@ -295,12 +295,12 @@ export default function TenantHome() {
   const canStart = !!currentPage.selectedFile && !busy;
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:hidden">
+    <div className="space-y-6 overflow-x-hidden">
+      <div className="grid gap-4 md:hidden justify-items-center">
         <button
           type="button"
           onClick={scrollToUpload}
-          className="text-left rounded-2xl border bg-white p-5 hover:bg-zinc-50 transition"
+          className="w-full max-w-[320px] text-left rounded-2xl border bg-white p-4 hover:bg-zinc-50 transition"
         >
           <div className="text-sm font-semibold">受給者証取込＆送信</div>
           <div className="mt-1 text-xs opacity-70">
@@ -310,7 +310,7 @@ export default function TenantHome() {
 
         <Link
           href={`/t/${tenantId}/settings`}
-          className="rounded-2xl border bg-white p-5 hover:bg-zinc-50 transition"
+          className="w-full max-w-[320px] rounded-2xl border bg-white p-4 hover:bg-zinc-50 transition"
         >
           <div className="text-sm font-semibold">システム設定</div>
           <div className="mt-1 text-xs opacity-70">OCR/保存先などの設定を管理</div>
@@ -318,14 +318,14 @@ export default function TenantHome() {
 
         <Link
           href="/logout"
-          className="rounded-2xl border bg-white p-5 hover:bg-zinc-50 transition"
+          className="w-full max-w-[320px] rounded-2xl border bg-white p-4 hover:bg-zinc-50 transition"
         >
           <div className="text-sm font-semibold text-red-600">ログアウト</div>
           <div className="mt-1 text-xs opacity-70">現在のアカウントからログアウト</div>
         </Link>
       </div>
 
-      <div className="rounded-2xl border bg-white p-5">
+      <div className="w-full max-w-[360px] md:max-w-full mx-auto rounded-2xl border bg-white p-4 md:p-5 overflow-hidden">
         <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
           {pages.map((page, index) => {
             const done = !!page.previewUrl;
@@ -364,7 +364,7 @@ export default function TenantHome() {
           </div>
         </div>
 
-        <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2 min-w-0">
+        <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2 w-full max-w-full min-w-0">
           <div className="min-w-0 rounded-2xl border p-5">
             <div className="text-sm font-semibold">
               受給者証画像（{activePageIndex + 1}/6）
@@ -455,8 +455,8 @@ export default function TenantHome() {
               受給者証レイアウトに合わせて表示
             </div>
 
-            <div className="mt-4 max-w-full overflow-x-auto">
-              <div className="w-full max-w-[520px] border text-[10px] leading-5 mx-auto">
+            <div className="mt-4 w-full max-w-full overflow-x-auto">
+              <div className="min-w-full border text-[10px] leading-5">
                 <div className="border-b px-4 py-3 text-center text-[18px]">
                   障害福祉サービス受給者証（Ⅰ）
                 </div>

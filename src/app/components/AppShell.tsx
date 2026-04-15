@@ -103,24 +103,32 @@ export default function AppShell({
         }
 
         .pcare-body{
-          max-width:1200px;
+          width:100%;
+          max-width:100%;
           margin:0 auto;
-          padding:16px;
+          padding:12px;
+          box-sizing:border-box;
           display:grid;
           grid-template-columns: 1fr;
           gap:16px;
         }
         .pcare-main{
+          width:100%;
+          max-width:100%;
+          box-sizing:border-box;
+          overflow:hidden;
           background:#fff;
           border:1px solid rgba(17,24,39,.10);
           border-radius:16px;
-          padding:16px;
+          padding:12px;
           box-shadow:0 10px 30px rgba(17,24,39,.06);
           min-height: calc(100dvh - 120px);
         }
 
         @media (min-width: 900px){
           .pcare-body{
+            max-width:1200px;
+            padding:16px;
             grid-template-columns: 260px 1fr;
             align-items:start;
           }
