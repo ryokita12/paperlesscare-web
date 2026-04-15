@@ -227,23 +227,23 @@ export default function CapturePage() {
             className="relative w-[82vw] max-w-[430px] aspect-[210/297] rounded-2xl"
           >
             {/* 枠線 */}
-            <div className="absolute inset-0 rounded-2xl border-4 border-white/90" />
+            <div className="absolute inset-0 rounded-2xl border-[6px] border-blue-400" />
             {/* 角の強調（任意） */}
-            <div className="absolute -top-1 -left-1 h-6 w-6 border-l-4 border-t-4 border-white" />
-            <div className="absolute -top-1 -right-1 h-6 w-6 border-r-4 border-t-4 border-white" />
-            <div className="absolute -bottom-1 -left-1 h-6 w-6 border-l-4 border-b-4 border-white" />
-            <div className="absolute -bottom-1 -right-1 h-6 w-6 border-r-4 border-b-4 border-white" />
+            <div className="absolute -top-1 -left-1 h-7 w-7 border-l-[5px] border-t-[5px] border-blue-400" />
+            <div className="absolute -top-1 -right-1 h-7 w-7 border-r-[5px] border-t-[5px] border-blue-400" />
+            <div className="absolute -bottom-1 -left-1 h-7 w-7 border-l-[5px] border-b-[5px] border-blue-400" />
+            <div className="absolute -bottom-1 -right-1 h-7 w-7 border-r-[5px] border-b-[5px] border-blue-400" />
 
             {/* 内側補助線 */}
             <div className="absolute inset-0 rounded-2xl overflow-hidden">
-              <div className="absolute left-0 right-0 top-[8%] border-t border-white/30" />
-              <div className="absolute left-0 right-0 top-[16%] border-t border-white/20" />
-              <div className="absolute left-0 right-0 top-[48%] border-t border-white/20" />
-              <div className="absolute left-0 right-0 top-[70%] border-t border-white/20" />
+              <div className="absolute left-0 right-0 top-[8%] border-t border-blue-400/40" />
+              <div className="absolute left-0 right-0 top-[16%] border-t border-blue-400/30" />
+              <div className="absolute left-0 right-0 top-[48%] border-t border-blue-400/30" />
+              <div className="absolute left-0 right-0 top-[70%] border-t border-blue-400/30" />
             </div>
 
             {/* ガイド文 */}
-            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 text-xs opacity-80 whitespace-nowrap">
+            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 text-xs text-blue-200 font-medium whitespace-nowrap">
               受給者証の四辺を枠に合わせてください
             </div>
           </div>

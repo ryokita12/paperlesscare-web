@@ -7,49 +7,14 @@ import { httpsCallable } from "firebase/functions";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { storage, functions } from "@/lib/firebase";
 import { useRequireAuth } from "@/lib/auth";
+import type { CertPage } from "./types/cert";
+import { PAGE_COUNT, PAGE_TITLES, emptyFormData, createEmptyPage } from "./constants/certPages";
+import PageTabs from "./components/PageTabs";
+import { parseCertText } from "./lib/parseCertText";
 
 type OcrResponse = { text?: string };
 
-type FormDataType = {
-  number: string;
-  address: string;
-  name: string;
-  birthday: string;
-  childName: string;
-  childBirthday: string;
-  disabilityType: string;
-  issueDate: string;
-  cityName: string;
-};
-
-type CertPage = {
-  selectedFile: File | null;
-  previewUrl: string;
-  ocrText: string;
-  formData: FormDataType;
-};
-
-const PAGE_COUNT = 6;
 const STORAGE_KEY_PREFIX = "paperlesscare_capture_v1_";
-
-const emptyFormData = (): FormDataType => ({
-  number: "",
-  address: "",
-  name: "",
-  birthday: "",
-  childName: "",
-  childBirthday: "",
-  disabilityType: "",
-  issueDate: "",
-  cityName: "",
-});
-
-const createEmptyPage = (): CertPage => ({
-  selectedFile: null,
-  previewUrl: "",
-  ocrText: "",
-  formData: emptyFormData(),
-});
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -80,6 +45,7 @@ export default function TenantHome() {
 
   const nextPath = useMemo(() => `/t/${tenantId || "aaaa"}`, [tenantId]);
   const currentPage = pages[activePageIndex];
+  const currentPageTitle = PAGE_TITLES[activePageIndex] || `ページ ${activePageIndex + 1}`;
 
   const updateCurrentPage = (updater: (page: CertPage) => CertPage) => {
     setPages((prev) =>
@@ -220,30 +186,7 @@ export default function TenantHome() {
       const res = await ocrFromStoragePath({ storagePath: path });
       const text = res.data?.text ?? "";
 
-      const parsed: FormDataType = {
-        number: text.match(/\d{10}/)?.[0] || "",
-        address:
-          text.match(/居住地\s*([\s\S]*?)\s*フリガナ/)?.[1]?.trim() ||
-          text.match(/住所\s*([\s\S]*?)\s*フリガナ/)?.[1]?.trim() ||
-          "",
-        name:
-          text.match(/支給決定障害者等[\s\S]*?氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() ||
-          text.match(/氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() ||
-          "",
-        birthday:
-          text.match(/支給決定障害者等[\s\S]*?((昭和|平成|令和)[^\n]*?日)/)?.[1] ||
-          text.match(/(昭和|平成|令和)[^\n]*?日/)?.[0] ||
-          "",
-        childName:
-          text.match(/児童[\s\S]*?氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() || "",
-        childBirthday:
-          text.match(/児童[\s\S]*?((昭和|平成|令和)[^\n]*?日)/)?.[1] || "",
-        disabilityType: text.match(/障害種別\s*([^\n]+)/)?.[1]?.trim() || "",
-        issueDate: text.match(/交付年月日\s*([^\n]+)/)?.[1]?.trim() || "",
-        cityName:
-          text.match(/支給市区町村名[\s\S]*?([^\n]+市[^\n]*|[^\n]+区[^\n]*|[^\n]+町[^\n]*|[^\n]+村[^\n]*)/)?.[1]?.trim() ||
-          "",
-      };
+      const parsed = parseCertText(text);
 
       updateCurrentPage((page) => ({
         ...page,
@@ -304,7 +247,7 @@ export default function TenantHome() {
         >
           <div className="text-sm font-semibold">受給者証取込＆送信</div>
           <div className="mt-1 text-xs opacity-70">
-            6枚綴りの受給者証をページごとに登録します
+            8枚綴りの受給者証をページごとに登録します
           </div>
         </button>
 
@@ -325,25 +268,18 @@ export default function TenantHome() {
         </Link>
       </div>
 
-      <div className="w-full max-w-[360px] md:max-w-full mx-auto rounded-2xl border bg-white p-4 md:p-5 overflow-hidden">
-        <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
-          {pages.map((page, index) => {
-            const done = !!page.previewUrl;
-            const active = index === activePageIndex;
+      <div className="w-full max-w-[360px] md:max-w-full mx-auto rounded-2xl border bg-white p-4 md:p-5 overflow-x-visible">
+        <PageTabs
+          pages={pages}
+          activePageIndex={activePageIndex}
+          onChangePage={setActivePageIndex}
+        />
 
-            return (
-              <button
-                key={index}
-                type="button"
-                onClick={() => setActivePageIndex(index)}
-                className={`shrink-0 rounded-xl border px-4 py-2 text-sm transition ${
-                  active ? "bg-black text-white border-black" : "bg-white text-black"
-                }`}
-              >
-                {index + 1}/6 {done ? "●" : ""}
-              </button>
-            );
-          })}
+        <div className="mb-3 rounded-xl bg-zinc-50 px-3 py-2">
+          <div className="text-xs opacity-60">現在のページ</div>
+          <div className="text-sm font-semibold break-words">
+            {activePageIndex + 1}/8：{currentPageTitle}
+          </div>
         </div>
 
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -367,10 +303,10 @@ export default function TenantHome() {
         <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2 w-full max-w-full min-w-0">
           <div className="min-w-0 rounded-2xl border p-5">
             <div className="text-sm font-semibold">
-              受給者証画像（{activePageIndex + 1}/6）
+              受給者証画像（{activePageIndex + 1}/8）
             </div>
             <div className="mt-1 text-xs opacity-70">
-              6枚綴りのうち現在のページ画像を登録します
+              {currentPageTitle} の画像を登録します
             </div>
 
             <input
@@ -436,7 +372,7 @@ export default function TenantHome() {
             {currentPage.previewUrl && (
               <div className="mt-4">
                 <div className="text-xs opacity-70">
-                  サムネイル（{activePageIndex + 1}/6）
+                  サムネイル（{activePageIndex + 1}/8）
                 </div>
                 <img
                   src={currentPage.previewUrl}
@@ -449,16 +385,16 @@ export default function TenantHome() {
 
           <div className="min-w-0 rounded-2xl border p-5">
             <div className="text-sm font-semibold">
-              OCR結果（{activePageIndex + 1}/6）
+              受給者証取込 結果（{activePageIndex + 1}/8）
             </div>
             <div className="mt-1 text-xs opacity-70">
-              受給者証レイアウトに合わせて表示
+              {currentPageTitle} のレイアウトに合わせて表示
             </div>
 
             <div className="mt-4 w-full max-w-full overflow-x-auto">
               <div className="min-w-full border text-[10px] leading-5">
                 <div className="border-b px-4 py-3 text-center text-[18px]">
-                  障害福祉サービス受給者証（Ⅰ）
+                  {currentPageTitle}
                 </div>
 
                 <div className="grid grid-cols-[140px_1fr] border-b">
@@ -537,7 +473,7 @@ export default function TenantHome() {
           </button>
 
           <div className="text-xs opacity-70">
-            現在 {activePageIndex + 1} / {PAGE_COUNT}
+            現在 {activePageIndex + 1} / {PAGE_COUNT} ： {currentPageTitle}
           </div>
 
           <button
