@@ -50,11 +50,17 @@ export const ocrFromStoragePath = onCall(async (req) => {
 
     // Vision OCR
     const client = new ImageAnnotatorClient();
-    const [result] = await client.textDetection({
+    const [result] = await client.documentTextDetection({
       image: { content: bytes },
     });
 
     const text = result.fullTextAnnotation?.text ?? "";
+
+    logger.info("ocrFromStoragePath raw text", {
+      storagePath,
+      textLength: text.length,
+      text,
+    });
 
     return { text };
   } catch (err: any) {

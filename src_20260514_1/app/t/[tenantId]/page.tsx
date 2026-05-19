@@ -17,8 +17,7 @@ import {
 } from "./constants/certPages";
 import PageTabs from "./components/PageTabs";
 import CertLayoutRenderer from "./components/certLayouts";
-import RecipientImportModeSelect from "./components/RecipientImportModeSelect";
-import { parseCertText } from "./lib/parsers/parseCertText";
+import { parseCertText } from "./lib/parseCertText";
 
 type OcrResponse = { text?: string };
 
@@ -42,9 +41,6 @@ export default function TenantHome() {
     PAGE_COUNT - 1
   );
 
-  const [flowStep, setFlowStep] = useState<"selectMode" | "import">("selectMode");
-  const [importMode, setImportMode] = useState<"new" | "update" | null>(null);
-
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [activePageIndex, setActivePageIndex] = useState(initialPage);
@@ -54,7 +50,6 @@ export default function TenantHome() {
   );
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const pagesRef = useRef<CertPage[]>(pages);
 
   const nextPath = useMemo(() => `/t/${tenantId || "aaaa"}`, [tenantId]);
   const currentPage = pages[activePageIndex];
@@ -67,23 +62,6 @@ export default function TenantHome() {
       prev.map((page, index) => (index === activePageIndex ? updater(page) : page))
     );
   };
-
-  const updateFormField = (
-    field: keyof CertPage["formData"],
-    value: string
-  ) => {
-    updateCurrentPage((page) => ({
-      ...page,
-      formData: {
-        ...page.formData,
-        [field]: value,
-      },
-    }));
-  };
-
-  useEffect(() => {
-    pagesRef.current = pages;
-  }, [pages]);
 
   useEffect(() => {
     setActivePageIndex(initialPage);
@@ -110,13 +88,13 @@ export default function TenantHome() {
 
   useEffect(() => {
     return () => {
-      pagesRef.current.forEach((page) => {
+      pages.forEach((page) => {
         if (page.previewUrl.startsWith("blob:")) {
           URL.revokeObjectURL(page.previewUrl);
         }
       });
     };
-  }, []);
+  }, [pages]);
 
   const resetSelection = () => {
     if (currentPage.previewUrl.startsWith("blob:")) {
@@ -218,15 +196,7 @@ export default function TenantHome() {
       const res = await ocrFromStoragePath({ storagePath: path });
       const text = res.data?.text ?? "";
 
-      console.log("OCR RAW TEXT", text);
-
-      const parsed = parseCertText(
-        text,
-        activePageIndex,
-        selectedCertType
-      );
-
-      console.log("PARSED CERT DATA", parsed);
+      const parsed = parseCertText(text);
 
       updateCurrentPage((page) => ({
         ...page,
@@ -271,25 +241,6 @@ export default function TenantHome() {
   }
 
   const canStart = !!currentPage.selectedFile && !busy;
-
-  if (flowStep === "selectMode") {
-    return (
-      <div className="space-y-6 overflow-x-hidden">
-        <RecipientImportModeSelect
-          onSelect={(mode) => {
-            setImportMode(mode);
-
-            if (mode === "new") {
-              setFlowStep("import");
-              return;
-            }
-
-            alert("既存受給者検索は次のステップで追加します");
-          }}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 overflow-x-hidden">
@@ -369,7 +320,6 @@ export default function TenantHome() {
             <PageTabs
               pages={pages}
               activePageIndex={activePageIndex}
-              selectedCertType={selectedCertType}
               onChangePage={setActivePageIndex}
             />
           </div>
@@ -479,7 +429,6 @@ export default function TenantHome() {
                   pageIndex={activePageIndex}
                   pageTitle={currentPageTitle}
                   page={currentPage}
-                  onChangeField={updateFormField}
                 />
               </div>
             </div>

@@ -83,38 +83,14 @@ export const PAGE_TITLES = PAGE_DEFINITIONS.map((page) => page.title);
 
 export const emptyFormData = (): FormDataType => ({
   number: "",
-
   address: "",
-  furigana: "",
-
   name: "",
   birthday: "",
-
-  childFurigana: "",
   childName: "",
   childBirthday: "",
-
   disabilityType: "",
   issueDate: "",
-
   cityName: "",
-  issuerAddress: "",
-
-  certPeriod: "",
-
-  serviceType1: "",
-  servicePeriod1: "",
-  serviceAmount1: "",
-
-  serviceType2: "",
-  servicePeriod2: "",
-  serviceAmount2: "",
-
-  serviceType3: "",
-  servicePeriod3: "",
-  serviceAmount3: "",
-
-  memo: "",
 });
 
 export const createEmptyPage = (): CertPage => ({
