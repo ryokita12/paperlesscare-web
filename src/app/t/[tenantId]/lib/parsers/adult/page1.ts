@@ -27,12 +27,16 @@ export function parseAdultPage1(text: string): FormDataType {
       pickLineAfter(text, "居住地") ||
       "",
 
+    furigana: "",
+
     name:
       pickLineAfter(text, "等氏名") ||
       pickLineAfter(text, "氏名") ||
       "",
 
     birthday: birthdays[0] || "",
+
+    childFurigana: "",
 
     childName:
       text.match(/児童[\s\S]*?氏名\s*([^\n]+?)\s*生年月日/)?.[1]?.trim() || "",
