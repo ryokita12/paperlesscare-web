@@ -1,0 +1,120 @@
+/* src/app/globals.css */
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7fb; /* 画面全体の背景（スマホ枠をやめて全幅に） */
+  --foreground: #111827;
+
+  /* 任意：共通の最大幅（AppShell側が未使用でも使えるように） */
+  --container-max: 1200px;
+  --container-pad: 16px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ダークモードでも “アプリっぽい” 背景にする */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b1220;
+    --foreground: #e5e7eb;
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+
+  /* 既存のフォント指定は維持（必要なら後で Geist に寄せる） */
+  font-family: Arial, Helvetica, sans-serif;
+
+  /* ✅ 固定幅/中央固定を作らない（全幅のベース） */
+}
+
+/* 画像のはみ出し防止（スマホ/PC両対応） */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* aタグの見た目を崩しにくくする（必要最低限） */
+a {
+  color: inherit;
+}
+
+/* 受給者証の表 スタイル指定 */
+.cert-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  padding: 6px 0;
+}
+
+.cert-table {
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.cert-cell {
+  padding: 4px 6px;
+}
+
+.cert-row-sm {
+  min-height: 40px;
+}
+
+.cert-row-md {
+  min-height: 80px;
+}
+
+.cert-row-lg {
+  min-height: 120px;
+}
+
+/*
+  ✅ レイアウトのgrid（PC=2列/タブレット縮小/スマホ1列）は
+  AppShell.tsx 側で担う方針です。
+  globals.css に “固定枠” や “中央寄せコンテナ” を置かないことで
+  全ページがレスポンシブ前提になります。
+*/
+
+/* ===== 受給者証タイプ ===== */
+.cert-type-cream {
+  background: #fff7e6;
+  border-color: #f5d7a1;
+}
+
+.cert-type-purple {
+  background: #ede9fe;
+  border-color: #a78bfa;
+}
+
+.cert-type-green {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+}
+
+.cert-type-active {
+  border-width: 2px;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.1);
+}
+
+/* ===== サムネイル ===== */
+.cert-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 6px;
+  background: #fff;
+}

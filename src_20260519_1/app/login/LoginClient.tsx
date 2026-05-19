@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
@@ -28,33 +29,31 @@ export default function LoginClient() {
     setMsg("");
 
     try {
+      console.log("[LOGIN] 1 signIn start");
+
       const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+
+      console.log("[LOGIN] 2 signIn success", cred.user.uid);
+
       const next = sp.get("next");
       if (next) {
+        console.log("[LOGIN] 3 next redirect", next);
         router.replace(next);
         return;
       }
 
       const uid = cred.user.uid;
-      const idToken = await cred.user.getIdToken();
-      const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 
-      const res = await fetch(
-        `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${uid}`,
-        {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${idToken}`,
-          },
-        }
-      );
+      console.log("[LOGIN] 4 getDoc start", uid);
 
-      if (!res.ok) {
-        throw new Error(`tenant fetch failed: ${res.status}`);
-      }
+      const snap = await getDoc(doc(db, "users", uid));
 
-      const data = await res.json();
-      const tenantId = data.fields?.tenantId?.stringValue || "";
+      console.log("[LOGIN] 5 getDoc success", snap.exists());
+
+      const tenantId = snap.exists() ? (snap.data() as any).tenantId : "";
+
+      console.log("[LOGIN] 6 tenantId", tenantId);
+      console.log("[LOGIN] 7 router.replace start");
 
       router.replace(tenantId ? `/t/${tenantId}` : "/login");
     } catch (e: any) {

@@ -2,8 +2,6 @@ import type { FormDataType } from "../../types/cert";
 import { normalizeText } from "./normalizeText";
 import { parseAdultPage1 } from "./adult/page1";
 import { parseAdultPage2 } from "./adult/page2";
-import { parseAdultPage3 } from "./adult/page3";
-import { parseAdultPage4 } from "./adult/page4";
 
 function parseFallback(text: string): FormDataType {
   return {
@@ -60,14 +58,6 @@ export function parseCertText(
 
   if (selectedCertType === "adult" && pageIndex === 1) {
     return parseAdultPage2(normalized);
-  }
-
-  if (selectedCertType === "adult" && pageIndex === 2) {
-    return parseAdultPage3(normalized);
-  }
-
-  if (selectedCertType === "adult" && pageIndex === 3) {
-    return parseAdultPage4(normalized);
   }
 
   return parseFallback(normalized);

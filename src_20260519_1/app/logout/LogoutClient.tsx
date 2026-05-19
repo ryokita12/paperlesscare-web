@@ -22,15 +22,14 @@ export default function LogoutClient() {
     const run = async () => {
       try {
         const next = sp.get("next") || "/login";
-        signOut(auth).catch((e) => {
-          console.warn("Logout signOut failed:", e);
-        });
+        await signOut(auth);
 
         if (cancelled || !mountedRef.current) return;
         router.replace(next);
       } catch (e: any) {
-        console.warn("Logout signOut skipped/failed:", e);
+        if (e?.name === "AbortError") return;
 
+        console.error("Logout failed:", e);
         if (cancelled || !mountedRef.current) return;
         router.replace("/login");
       }
