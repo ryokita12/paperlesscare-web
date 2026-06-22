@@ -303,20 +303,31 @@ export default function TenantHome() {
           <div className="grid gap-2 md:grid-cols-3">
             {CERT_TYPES.map((type) => {
               const active = selectedCertType === type.id;
+              const disabled = !type.enabled;
 
               return (
                 <button
                   key={type.id}
                   type="button"
-                  onClick={() => setSelectedCertType(type.id)}
+                  disabled={disabled}
+                  onClick={() => {
+                    if (disabled) return;
+                    setSelectedCertType(type.id);
+                  }}
                   className={`rounded-2xl border px-4 py-3 text-left transition ${type.themeClass} ${
                     active ? "cert-type-active shadow-sm" : "opacity-70 hover:opacity-100"
-                  }`}
+                  } ${disabled ? "cursor-not-allowed opacity-50 hover:opacity-50" : ""}`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="text-sm font-bold">{type.shortLabel}</div>
                       <div className="mt-1 text-xs opacity-70">{type.colorName}</div>
+
+                      {type.statusLabel && (
+                        <div className="mt-2 inline-flex rounded-full bg-white/70 px-2 py-1 text-[11px] font-bold text-zinc-500">
+                          {type.statusLabel}
+                        </div>
+                      )}
                     </div>
 
                     {active && (

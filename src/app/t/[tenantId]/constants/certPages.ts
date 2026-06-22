@@ -9,6 +9,8 @@ export const CERT_TYPES = [
     shortLabel: "移動支援・地域活動支援 受給者証",
     colorName: "クリーム色の受給者証",
     themeClass: "cert-type-cream",
+    enabled: false,
+    statusLabel: "今後実装予定",
   },
   {
     id: "adult",
@@ -16,6 +18,8 @@ export const CERT_TYPES = [
     shortLabel: "障害福祉サービス受給者証（18歳以上）",
     colorName: "紫色の受給者証",
     themeClass: "cert-type-purple",
+    enabled: true,
+    statusLabel: "",
   },
   {
     id: "child",
@@ -23,6 +27,8 @@ export const CERT_TYPES = [
     shortLabel: "障害福祉サービス受給者証（18歳未満）",
     colorName: "黄緑色の受給者証",
     themeClass: "cert-type-green",
+    enabled: false,
+    statusLabel: "今後実装予定",
   },
 ] as const;
 
