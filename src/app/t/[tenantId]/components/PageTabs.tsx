@@ -1,7 +1,7 @@
 import { PAGE_DEFINITIONS } from "../constants/certPages";
 
 type Props = {
-  pages: { previewUrl: string }[];
+  pages: { previewUrl: string; storagePath?: string }[];
   activePageIndex: number;
   selectedCertType: "mobility" | "adult" | "child";
   onChangePage: (index: number) => void;
@@ -13,8 +13,9 @@ export default function PageTabs({
   selectedCertType,
   onChangePage,
 }: Props) {
-  const renderPageButton = (page: { previewUrl: string }, index: number) => {
-    const done = !!page.previewUrl;
+  const renderPageButton = (page: { previewUrl: string; storagePath?: string }, index: number) => {
+    // previewUrl（blob:）はセッション復元の対象外のため、storagePathの有無でも判定する
+    const done = !!page.previewUrl || !!page.storagePath;
     const active = index === activePageIndex;
     const definition = PAGE_DEFINITIONS[index];
 

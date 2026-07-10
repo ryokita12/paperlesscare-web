@@ -24,9 +24,61 @@ import { saveBeneficiary } from "./lib/firestore/beneficiaries";
 type OcrResponse = { text?: string };
 
 const STORAGE_KEY_PREFIX = "paperlesscare_capture_v1_";
+const SESSION_STORAGE_KEY_PREFIX = "paperlesscare_import_session_v1_";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+// スマホ撮影画面（別ルート）へ遷移して戻ってきた際に、取込中の状態を
+// 復元するためのセッション。File/blobなどJSON化できない値は対象外。
+type PersistedPageData = {
+  formData: CertPage["formData"];
+  ocrText: string;
+  storagePath: string;
+};
+
+type ImportSession = {
+  flowStep: "selectMode" | "import";
+  importMode: "new" | "update" | null;
+  selectedCertType: CertTypeId;
+  activePageIndex: number;
+  pages: PersistedPageData[];
+};
+
+function importSessionKey(tenantId: string) {
+  return `${SESSION_STORAGE_KEY_PREFIX}${tenantId}`;
+}
+
+function readImportSession(tenantId: string): ImportSession | null {
+  if (typeof window === "undefined" || !tenantId) return null;
+
+  try {
+    const raw = sessionStorage.getItem(importSessionKey(tenantId));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.pages)) return null;
+
+    return parsed as ImportSession;
+  } catch {
+    return null;
+  }
+}
+
+function writeImportSession(tenantId: string, session: ImportSession) {
+  if (typeof window === "undefined" || !tenantId) return;
+
+  try {
+    sessionStorage.setItem(importSessionKey(tenantId), JSON.stringify(session));
+  } catch {
+    // sessionStorageが使えない環境では復元できないだけなので無視する
+  }
+}
+
+function clearImportSession(tenantId: string) {
+  if (typeof window === "undefined" || !tenantId) return;
+  sessionStorage.removeItem(importSessionKey(tenantId));
 }
 
 export default function TenantHome() {
@@ -37,33 +89,58 @@ export default function TenantHome() {
   const tenantId = routeParams?.tenantId ?? "";
   const { user, loading } = useRequireAuth();
 
-  const initialPage = clamp(
-    Number(searchParams.get("page") || "1") - 1,
-    0,
-    PAGE_COUNT - 1
-  );
+  // スマホ撮影からの復路など、同一tenantIdでの再マウント時に
+  // sessionStorageから取込中の状態を1回だけ読み込む
+  const restoredSession = useMemo(() => readImportSession(tenantId), [tenantId]);
 
-  const [flowStep, setFlowStep] = useState<"selectMode" | "import">("selectMode");
-  const [importMode, setImportMode] = useState<"new" | "update" | null>(null);
+  const pageQueryParam = searchParams.get("page");
+  const initialPage = pageQueryParam
+    ? clamp(Number(pageQueryParam) - 1, 0, PAGE_COUNT - 1)
+    : clamp(restoredSession?.activePageIndex ?? 0, 0, PAGE_COUNT - 1);
+
+  const [flowStep, setFlowStep] = useState<"selectMode" | "import">(
+    () => restoredSession?.flowStep ?? "selectMode"
+  );
+  const [importMode, setImportMode] = useState<"new" | "update" | null>(
+    () => restoredSession?.importMode ?? null
+  );
 
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [activePageIndex, setActivePageIndex] = useState(initialPage);
-  const [selectedCertType, setSelectedCertType] = useState<CertTypeId>("adult");
-  const [pages, setPages] = useState<CertPage[]>(() =>
-    Array.from({ length: PAGE_COUNT }, () => createEmptyPage())
+  const [selectedCertType, setSelectedCertType] = useState<CertTypeId>(
+    () => restoredSession?.selectedCertType ?? "adult"
   );
+  const [pages, setPages] = useState<CertPage[]>(() => {
+    const base = Array.from({ length: PAGE_COUNT }, () => createEmptyPage());
+    if (!restoredSession) return base;
+
+    return base.map((page, index) => {
+      const saved = restoredSession.pages[index];
+      if (!saved) return page;
+
+      return {
+        ...page,
+        formData: { ...emptyFormData(), ...saved.formData },
+        ocrText: saved.ocrText || "",
+        storagePath: saved.storagePath || "",
+      };
+    });
+  });
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const pagesRef = useRef<CertPage[]>(pages);
+  const hasHydratedSessionRef = useRef(false);
 
   const nextPath = useMemo(() => `/t/${tenantId || "aaaa"}`, [tenantId]);
   const currentPage = pages[activePageIndex];
   const currentPageTitle = PAGE_TITLES[activePageIndex] || `ページ ${activePageIndex + 1}`;
   const currentCertType = CERT_TYPES.find((type) => type.id === selectedCertType) || CERT_TYPES[0];
-  const completedCount = pages.filter((page) => !!page.previewUrl).length;
+  // previewUrl（blob:）はセッション復元の対象外のため、復元後のページは
+  // storagePathの有無でも「取込済み」と判定する
+  const completedCount = pages.filter((page) => !!page.previewUrl || !!page.storagePath).length;
 
   const updateCurrentPage = (updater: (page: CertPage) => CertPage) => {
     setPages((prev) =>
@@ -92,7 +169,34 @@ export default function TenantHome() {
     setActivePageIndex(initialPage);
   }, [initialPage]);
 
+  // 取込中の状態（flowStep/importMode/selectedCertType/activePageIndex/各ページの
+  // formData・ocrText・storagePath）をtenantId単位でsessionStorageへ自動保存する。
+  // マウント直後（＝復元直後）の1回目は書き込みをスキップし、
+  // 復元前の空状態で上書きしてしまわないようにする。
   useEffect(() => {
+    if (!tenantId) return;
+
+    if (!hasHydratedSessionRef.current) {
+      hasHydratedSessionRef.current = true;
+      return;
+    }
+
+    writeImportSession(tenantId, {
+      flowStep,
+      importMode,
+      selectedCertType,
+      activePageIndex,
+      pages: pages.map((page) => ({
+        formData: page.formData,
+        ocrText: page.ocrText,
+        storagePath: page.storagePath,
+      })),
+    });
+  }, [tenantId, flowStep, importMode, selectedCertType, activePageIndex, pages]);
+
+  useEffect(() => {
+    if (loading || !user) return;
+
     const storageKey = `${STORAGE_KEY_PREFIX}${tenantId}`;
     const dataUrl =
       typeof window !== "undefined" ? sessionStorage.getItem(storageKey) : null;
@@ -107,9 +211,10 @@ export default function TenantHome() {
         type: "image/jpeg",
       });
       onFileSelected(file, dataUrl);
+      await performOcr(file);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, activePageIndex]);
+  }, [tenantId, activePageIndex, loading, user]);
 
   useEffect(() => {
     return () => {
@@ -189,8 +294,10 @@ export default function TenantHome() {
     onFileSelected(file);
   };
 
-  const startImport = async () => {
-    if (!currentPage.selectedFile || !user) return;
+  // アップロード〜OCR〜パース〜結果反映までの本体。
+  // 手動の「取込開始」ボタンと、スマホ撮影から戻った直後の自動OCRの両方から呼ばれる。
+  const performOcr = async (file: File) => {
+    if (!user) return;
 
     setBusy(true);
     setStatus(`${activePageIndex + 1}/${PAGE_COUNT} をアップロード中...`);
@@ -203,12 +310,12 @@ export default function TenantHome() {
 
     try {
       const uid = user.uid;
-      const safeName = currentPage.selectedFile.name.replace(/[^\w.\-]/g, "_");
+      const safeName = file.name.replace(/[^\w.\-]/g, "_");
       const path = `uploads/${uid}/${Date.now()}_${safeName}`;
       const storageRef = ref(storage, path);
 
-      await uploadBytes(storageRef, currentPage.selectedFile, {
-        contentType: currentPage.selectedFile.type || "image/jpeg",
+      await uploadBytes(storageRef, file, {
+        contentType: file.type || "image/jpeg",
       });
 
       setStatus(`✅ ${activePageIndex + 1}/${PAGE_COUNT} をOCR中...`);
@@ -250,6 +357,11 @@ export default function TenantHome() {
     }
   };
 
+  const startImport = async () => {
+    if (!currentPage.selectedFile) return;
+    await performOcr(currentPage.selectedFile);
+  };
+
   const handleSaveBeneficiary = async () => {
     if (!user || saving) return;
 
@@ -276,6 +388,7 @@ export default function TenantHome() {
       setStatus("");
       setFlowStep("selectMode");
       setImportMode(null);
+      clearImportSession(tenantId);
     } catch (e: any) {
       setSaveMessage(`❌ 保存に失敗しました: ${e.code || ""} ${e.message || e}`);
     } finally {
@@ -317,6 +430,10 @@ export default function TenantHome() {
             setImportMode(mode);
 
             if (mode === "new") {
+              // 新規登録を最初から開始するので、前回分の取込セッションが
+              // 残っていればクリアしてからimportステップへ進む
+              clearImportSession(tenantId);
+              setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
               setFlowStep("import");
               return;
             }
@@ -387,6 +504,7 @@ export default function TenantHome() {
               onClick={() => {
                 setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
                 setStatus("");
+                clearImportSession(tenantId);
               }}
               disabled={busy}
               className="rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
