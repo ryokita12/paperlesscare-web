@@ -234,14 +234,6 @@ export default function CapturePage() {
             <div className="absolute -bottom-1 -left-1 h-7 w-7 border-l-[5px] border-b-[5px] border-[#39FF14]" />
             <div className="absolute -bottom-1 -right-1 h-7 w-7 border-r-[5px] border-b-[5px] border-[#39FF14]" />
 
-            {/* 内側補助線 */}
-            <div className="absolute inset-0 rounded-2xl overflow-hidden">
-              <div className="absolute left-0 right-0 top-[8%] border-t-2 border-[#39FF14]/80" />
-              <div className="absolute left-0 right-0 top-[16%] border-t-2 border-[#39FF14]/70" />
-              <div className="absolute left-0 right-0 top-[48%] border-t-2 border-[#39FF14]/70" />
-              <div className="absolute left-0 right-0 top-[70%] border-t-2 border-[#39FF14]/70" />
-            </div>
-
             {/* ガイド文 */}
             <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 text-xs text-[#39FF14] font-medium whitespace-nowrap">
               受給者証の四辺を枠に合わせてください
