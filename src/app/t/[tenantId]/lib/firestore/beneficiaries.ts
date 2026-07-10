@@ -1,15 +1,18 @@
 import type { User } from "firebase/auth";
 import {
-  addDoc,
   collection,
+  doc,
+  getDoc,
   getDocs,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   Timestamp,
+  updateDoc,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import type { CertPage, FormDataType } from "../../types/cert";
+import type { FormDataType } from "../../types/cert";
 import type { CertTypeId } from "../../constants/certPages";
 
 export type SavedCertPage = {
@@ -44,48 +47,78 @@ function beneficiariesCollection(tenantId: string) {
   return collection(db, "tenants", tenantId, "beneficiaries");
 }
 
-export async function saveBeneficiary(params: {
-  tenantId: string;
-  certType: CertTypeId;
-  pageTitles: string[];
-  pages: CertPage[];
-  user: User;
-}): Promise<string> {
-  const { tenantId, certType, pageTitles, pages, user } = params;
+// 受給者ドキュメントIDをネットワーク不要でクライアント側に事前採番する。
+// 取込中のページ画像を最初からこのIDに紐づくStorageパスへアップロードすることで、
+// 保存後にファイルを移動させる必要をなくし、保存の再試行も安全（同一ID＝setDocで冪等）にする。
+export function reserveBeneficiaryId(tenantId: string): string {
+  return doc(beneficiariesCollection(tenantId)).id;
+}
 
-  const savedPages: SavedCertPage[] = pages.map((page, index) => ({
-    pageNo: index + 1,
-    title: pageTitles[index] || `ページ ${index + 1}`,
-    formData: page.formData,
-    ocrText: page.ocrText,
-    storagePath: page.storagePath,
-  }));
+export async function getBeneficiary(
+  tenantId: string,
+  beneficiaryId: string
+): Promise<BeneficiaryRecord | null> {
+  const snap = await getDoc(doc(beneficiariesCollection(tenantId), beneficiaryId));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...(snap.data() as Omit<BeneficiaryRecord, "id">) };
+}
 
-  // ページ1（受給者証（Ⅰ））の項目を代表値として一覧表示用に保持する
+function buildSummary(pages: { formData: FormDataType }[]): BeneficiarySummary {
   const identityPage = pages[0]?.formData;
-
-  const summary: BeneficiarySummary = {
+  return {
     name: identityPage?.name || "",
     furigana: identityPage?.furigana || "",
     number: identityPage?.number || "",
     birthday: identityPage?.birthday || "",
     cityName: identityPage?.cityName || "",
   };
+}
+
+export async function updateBeneficiary(params: {
+  tenantId: string;
+  beneficiaryId: string;
+  pages: SavedCertPage[];
+  user: User;
+}): Promise<void> {
+  const { tenantId, beneficiaryId, pages, user } = params;
+
+  await updateDoc(doc(beneficiariesCollection(tenantId), beneficiaryId), {
+    pages,
+    summary: buildSummary(pages),
+    updatedBy: { uid: user.uid, email: user.email },
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function saveBeneficiary(params: {
+  tenantId: string;
+  beneficiaryId: string;
+  certType: CertTypeId;
+  // 画像アップロード（Storageパスの確定）は呼び出し側（確定保存の直前）で
+  // 完了させておき、ここではFirestoreへの書き込みのみを行う。
+  pages: SavedCertPage[];
+  user: User;
+}): Promise<string> {
+  const { tenantId, beneficiaryId, certType, pages, user } = params;
+
+  // ページ1（受給者証（Ⅰ））の項目を代表値として一覧表示用に保持する
+  const summary = buildSummary(pages);
 
   const actor = { uid: user.uid, email: user.email };
 
-  const docRef = await addDoc(beneficiariesCollection(tenantId), {
+  // 事前採番済みIDへのsetDocなので、通信失敗後の再試行でも重複ドキュメントが生まれない
+  await setDoc(doc(beneficiariesCollection(tenantId), beneficiaryId), {
     tenantId,
     certType,
     summary,
-    pages: savedPages,
+    pages,
     createdBy: actor,
     createdAt: serverTimestamp(),
     updatedBy: actor,
     updatedAt: serverTimestamp(),
   });
 
-  return docRef.id;
+  return beneficiaryId;
 }
 
 export async function listBeneficiaries(

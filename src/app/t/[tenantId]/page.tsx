@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ref, uploadBytes } from "firebase/storage";
+import { deleteObject, ref, uploadBytes } from "firebase/storage";
 import { httpsCallable } from "firebase/functions";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
 import { storage, functions } from "@/lib/firebase";
@@ -19,15 +19,41 @@ import PageTabs from "./components/PageTabs";
 import CertLayoutRenderer from "./components/certLayouts";
 import RecipientImportModeSelect from "./components/RecipientImportModeSelect";
 import { parseCertText } from "./lib/parsers/parseCertText";
-import { saveBeneficiary } from "./lib/firestore/beneficiaries";
+import {
+  reserveBeneficiaryId,
+  saveBeneficiary,
+  type SavedCertPage,
+} from "./lib/firestore/beneficiaries";
+import { compressImageToJpeg } from "./lib/image/compressImage";
 
 type OcrResponse = { text?: string };
+
+// OCR用に画像をCallable Functionへ渡すため、Base64文字列（data:URLのプレフィックスなし）に変換する
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const result = String(reader.result || "");
+      const commaIndex = result.indexOf(",");
+      resolve(commaIndex >= 0 ? result.slice(commaIndex + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 const STORAGE_KEY_PREFIX = "paperlesscare_capture_v1_";
 const SESSION_STORAGE_KEY_PREFIX = "paperlesscare_import_session_v1_";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function formatError(e: unknown): string {
+  const code =
+    typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
+  const message = e instanceof Error ? e.message : String(e);
+  return `${code} ${message}`.trim();
 }
 
 // スマホ撮影画面（別ルート）へ遷移して戻ってきた際に、取込中の状態を
@@ -43,6 +69,7 @@ type ImportSession = {
   importMode: "new" | "update" | null;
   selectedCertType: CertTypeId;
   activePageIndex: number;
+  beneficiaryId: string;
   pages: PersistedPageData[];
 };
 
@@ -113,6 +140,13 @@ export default function TenantHome() {
   const [selectedCertType, setSelectedCertType] = useState<CertTypeId>(
     () => restoredSession?.selectedCertType ?? "adult"
   );
+  // 受給者ドキュメントIDを取込開始時点で事前採番しておく。ページ画像は最初から
+  // このIDに紐づくStorageパス（tenants/{tenantId}/recipients/{beneficiaryId}/pageN.jpg）へ
+  // アップロードするため、保存後に画像を移動させる必要がなく、保存の再試行も安全になる。
+  const [beneficiaryId, setBeneficiaryId] = useState<string>(
+    () => restoredSession?.beneficiaryId || (tenantId ? reserveBeneficiaryId(tenantId) : "")
+  );
+  const [compressing, setCompressing] = useState(false);
   const [pages, setPages] = useState<CertPage[]>(() => {
     const base = Array.from({ length: PAGE_COUNT }, () => createEmptyPage());
     if (!restoredSession) return base;
@@ -138,9 +172,11 @@ export default function TenantHome() {
   const currentPage = pages[activePageIndex];
   const currentPageTitle = PAGE_TITLES[activePageIndex] || `ページ ${activePageIndex + 1}`;
   const currentCertType = CERT_TYPES.find((type) => type.id === selectedCertType) || CERT_TYPES[0];
-  // previewUrl（blob:）はセッション復元の対象外のため、復元後のページは
-  // storagePathの有無でも「取込済み」と判定する
-  const completedCount = pages.filter((page) => !!page.previewUrl || !!page.storagePath).length;
+  // 画像は確定保存時まで一切アップロードしないため、「取込済み」の判定は
+  // ブラウザ内に保持しているFile（selectedFile）の有無で行う。
+  // ページ再読み込みやセッション復元をまたぐとFileは保持できないため、
+  // その場合は再度この画面で画像を選び直す必要がある。
+  const completedCount = pages.filter((page) => !!page.selectedFile).length;
 
   const updateCurrentPage = (updater: (page: CertPage) => CertPage) => {
     setPages((prev) =>
@@ -169,8 +205,15 @@ export default function TenantHome() {
     setActivePageIndex(initialPage);
   }, [initialPage]);
 
-  // 取込中の状態（flowStep/importMode/selectedCertType/activePageIndex/各ページの
-  // formData・ocrText・storagePath）をtenantId単位でsessionStorageへ自動保存する。
+  // tenantIdの解決がレンダリング後にずれ込んだ場合の保険。通常はuseParams()が
+  // 初回レンダリングで解決済みのため、ここが実行されるのは稀。
+  useEffect(() => {
+    if (!tenantId || beneficiaryId) return;
+    setBeneficiaryId(reserveBeneficiaryId(tenantId));
+  }, [tenantId, beneficiaryId]);
+
+  // 取込中の状態（flowStep/importMode/selectedCertType/activePageIndex/beneficiaryId/
+  // 各ページのformData・ocrText・storagePath）をtenantId単位でsessionStorageへ自動保存する。
   // マウント直後（＝復元直後）の1回目は書き込みをスキップし、
   // 復元前の空状態で上書きしてしまわないようにする。
   useEffect(() => {
@@ -186,13 +229,14 @@ export default function TenantHome() {
       importMode,
       selectedCertType,
       activePageIndex,
+      beneficiaryId,
       pages: pages.map((page) => ({
         formData: page.formData,
         ocrText: page.ocrText,
         storagePath: page.storagePath,
       })),
     });
-  }, [tenantId, flowStep, importMode, selectedCertType, activePageIndex, pages]);
+  }, [tenantId, flowStep, importMode, selectedCertType, activePageIndex, beneficiaryId, pages]);
 
   useEffect(() => {
     if (loading || !user) return;
@@ -256,10 +300,26 @@ export default function TenantHome() {
     fileInputRef.current?.click();
   };
 
-  const onFileSelected = (file: File | null, previewOverride?: string) => {
+  const onFileSelected = async (file: File | null, previewOverride?: string) => {
     if (!file) return;
 
-    const nextPreviewUrl = previewOverride || URL.createObjectURL(file);
+    let finalFile = file;
+
+    // カメラ撮影経由（previewOverrideあり）は既にcapture画面側でcrop・圧縮済みのため対象外。
+    // デスクトップのファイル選択・クリップボード貼り付けのみ、アップロード前に圧縮する。
+    if (!previewOverride) {
+      setCompressing(true);
+      setStatus("画像を圧縮中...");
+      try {
+        finalFile = await compressImageToJpeg(file, { maxDimension: 1800, quality: 0.85 });
+      } catch {
+        finalFile = file; // 圧縮に失敗しても元ファイルで取込を継続する
+      } finally {
+        setCompressing(false);
+      }
+    }
+
+    const nextPreviewUrl = previewOverride || URL.createObjectURL(finalFile);
 
     if (currentPage.previewUrl && currentPage.previewUrl.startsWith("blob:")) {
       URL.revokeObjectURL(currentPage.previewUrl);
@@ -267,7 +327,7 @@ export default function TenantHome() {
 
     updateCurrentPage((page) => ({
       ...page,
-      selectedFile: file,
+      selectedFile: finalFile,
       previewUrl: nextPreviewUrl,
       ocrText: "",
       formData: emptyFormData(),
@@ -294,13 +354,15 @@ export default function TenantHome() {
     onFileSelected(file);
   };
 
-  // アップロード〜OCR〜パース〜結果反映までの本体。
+  // OCR〜パース〜結果反映までの本体。
   // 手動の「取込開始」ボタンと、スマホ撮影から戻った直後の自動OCRの両方から呼ばれる。
+  // 画像はここではStorageへ一切アップロードしない。ブラウザ内のFileをBase64化して
+  // Callable Functionへ直接渡し、確定保存（handleSaveBeneficiary）時に初めてアップロードする。
   const performOcr = async (file: File) => {
     if (!user) return;
 
     setBusy(true);
-    setStatus(`${activePageIndex + 1}/${PAGE_COUNT} をアップロード中...`);
+    setStatus(`${activePageIndex + 1}/${PAGE_COUNT} をOCR中...`);
 
     updateCurrentPage((page) => ({
       ...page,
@@ -309,23 +371,14 @@ export default function TenantHome() {
     }));
 
     try {
-      const uid = user.uid;
-      const safeName = file.name.replace(/[^\w.\-]/g, "_");
-      const path = `uploads/${uid}/${Date.now()}_${safeName}`;
-      const storageRef = ref(storage, path);
+      const imageBase64 = await fileToBase64(file);
 
-      await uploadBytes(storageRef, file, {
-        contentType: file.type || "image/jpeg",
-      });
-
-      setStatus(`✅ ${activePageIndex + 1}/${PAGE_COUNT} をOCR中...`);
-
-      const ocrFromStoragePath = httpsCallable<{ storagePath: string }, OcrResponse>(
+      const ocrFromImageData = httpsCallable<{ imageBase64: string }, OcrResponse>(
         functions,
-        "ocrFromStoragePath"
+        "ocrFromImageData"
       );
 
-      const res = await ocrFromStoragePath({ storagePath: path });
+      const res = await ocrFromImageData({ imageBase64 });
       const text = res.data?.text ?? "";
 
       console.log("OCR RAW TEXT", text);
@@ -342,7 +395,6 @@ export default function TenantHome() {
         ...page,
         ocrText: text,
         formData: parsed,
-        storagePath: path,
       }));
 
       setStatus(
@@ -350,8 +402,8 @@ export default function TenantHome() {
           ? `✅ ${activePageIndex + 1}/${PAGE_COUNT} のOCRが完了しました`
           : `⚠️ ${activePageIndex + 1}/${PAGE_COUNT} のOCR結果が空でした`
       );
-    } catch (e: any) {
-      setStatus(`❌ Error: ${e.code || ""} ${e.message}`);
+    } catch (e: unknown) {
+      setStatus(`❌ Error: ${formatError(e)}`);
     } finally {
       setBusy(false);
     }
@@ -363,6 +415,7 @@ export default function TenantHome() {
   };
 
   const handleSaveBeneficiary = async () => {
+    // saving中の連打・二重送信を防止
     if (!user || saving) return;
 
     if (completedCount === 0) {
@@ -370,15 +423,50 @@ export default function TenantHome() {
       return;
     }
 
+    if (!beneficiaryId) {
+      setSaveMessage("⚠️ 受給者IDの準備ができていません。少し待ってから再度お試しください。");
+      return;
+    }
+
     setSaving(true);
-    setSaveMessage("保存中...");
+    setSaveMessage("画像をアップロード中...");
+
+    // 途中まで成功したアップロードを、失敗時に削除できるよう記録しておく
+    const uploadedPaths: string[] = [];
 
     try {
+      const savedPages: SavedCertPage[] = [];
+
+      for (let index = 0; index < pagesRef.current.length; index++) {
+        const page = pagesRef.current[index];
+        const pageNo = index + 1;
+        let pageStoragePath = "";
+
+        // このページに画像がある場合のみ、確定保存のこのタイミングで初めてアップロードする
+        if (page.selectedFile) {
+          pageStoragePath = `tenants/${tenantId}/recipients/${beneficiaryId}/page${pageNo}.jpg`;
+          await uploadBytes(ref(storage, pageStoragePath), page.selectedFile, {
+            contentType: "image/jpeg",
+          });
+          uploadedPaths.push(pageStoragePath);
+        }
+
+        savedPages.push({
+          pageNo,
+          title: PAGE_TITLES[index] || `ページ ${pageNo}`,
+          formData: page.formData,
+          ocrText: page.ocrText,
+          storagePath: pageStoragePath,
+        });
+      }
+
+      setSaveMessage("受給者データを保存中...");
+
       const id = await saveBeneficiary({
         tenantId,
+        beneficiaryId,
         certType: selectedCertType,
-        pageTitles: PAGE_TITLES,
-        pages: pagesRef.current,
+        pages: savedPages,
         user,
       });
 
@@ -389,8 +477,12 @@ export default function TenantHome() {
       setFlowStep("selectMode");
       setImportMode(null);
       clearImportSession(tenantId);
-    } catch (e: any) {
-      setSaveMessage(`❌ 保存に失敗しました: ${e.code || ""} ${e.message || e}`);
+    } catch (e: unknown) {
+      // アップロード失敗時・Firestore保存失敗時のいずれも、今回アップロード済みの
+      // 画像は孤立させず可能な範囲で削除する。入力内容・OCR結果（pages）はそのまま
+      // 保持し、再度「確定して保存」を押せば同じ受給者IDへ再送信できるようにする。
+      await Promise.allSettled(uploadedPaths.map((p) => deleteObject(ref(storage, p))));
+      setSaveMessage(`❌ 保存に失敗しました: ${formatError(e)}`);
     } finally {
       setSaving(false);
     }
@@ -420,7 +512,7 @@ export default function TenantHome() {
     );
   }
 
-  const canStart = !!currentPage.selectedFile && !busy;
+  const canStart = !!currentPage.selectedFile && !busy && !compressing;
 
   if (flowStep === "selectMode") {
     return (
@@ -431,9 +523,12 @@ export default function TenantHome() {
 
             if (mode === "new") {
               // 新規登録を最初から開始するので、前回分の取込セッションが
-              // 残っていればクリアしてからimportステップへ進む
+              // 残っていればクリアしてからimportステップへ進む。
+              // 受給者IDも新しく採番し直し、前回の取込フォルダとは別の
+              // Storageパスに画像を保存する。
               clearImportSession(tenantId);
               setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
+              setBeneficiaryId(reserveBeneficiaryId(tenantId));
               setFlowStep("import");
               return;
             }
@@ -563,7 +658,7 @@ export default function TenantHome() {
                 type="file"
                 accept="image/*"
                 capture="environment"
-                disabled={busy}
+                disabled={busy || compressing}
                 className="hidden"
                 onChange={(e) => onFileSelected(e.target.files?.[0] ?? null)}
               />
@@ -579,7 +674,7 @@ export default function TenantHome() {
                   <button
                     type="button"
                     onClick={onPickClick}
-                    disabled={busy}
+                    disabled={busy || compressing}
                     className="rounded-xl bg-black text-white px-4 py-2 text-sm disabled:opacity-50"
                   >
                     ファイルを選択
@@ -597,7 +692,7 @@ export default function TenantHome() {
                   <button
                     type="button"
                     onClick={resetSelection}
-                    disabled={busy}
+                    disabled={busy || compressing}
                     className="rounded-xl border px-4 py-2 text-sm hover:bg-white transition disabled:opacity-50"
                   >
                     クリア

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import styles from "./page.module.css";
 import { useRequireAuth } from "@/lib/auth";
 import { listBeneficiaries, type BeneficiaryRecord } from "../lib/firestore/beneficiaries";
@@ -24,12 +24,12 @@ function formatUpdatedAt(record: BeneficiaryRecord) {
 export default function BeneficiariesPage() {
   const params = useParams<{ tenantId: string }>();
   const tenantId = params?.tenantId ?? "";
+  const router = useRouter();
   const { user, loading } = useRequireAuth();
 
   const [beneficiaries, setBeneficiaries] = useState<BeneficiaryRecord[]>([]);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
-  const [selectedBeneficiary, setSelectedBeneficiary] = useState<BeneficiaryRecord | null>(null);
 
   useEffect(() => {
     if (!user || !tenantId) return;
@@ -147,7 +147,7 @@ export default function BeneficiariesPage() {
 								<tr
 									key={item.id}
 									className={styles.tableRow}
-									onClick={() => setSelectedBeneficiary(item)}
+									onClick={() => router.push(`/t/${tenantId}/beneficiaries/${item.id}`)}
 								>
 									<td className={styles.alignLeft}>{item.summary.name || "未登録"}</td>
 									<td className={styles.alignCenter}>{item.summary.number || "未取得"}</td>
@@ -170,66 +170,6 @@ export default function BeneficiariesPage() {
           </table>
         </div>
       </div>
-
-      {selectedBeneficiary && (
-        <div
-          className={styles.modalOverlay}
-          onClick={() => setSelectedBeneficiary(null)}
-        >
-          <div
-            className={styles.modal}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className={styles.modalHeader}>
-              <h2 className={styles.modalTitle}>受給者詳細</h2>
-              <button
-                type="button"
-                className={styles.modalCloseButton}
-                onClick={() => setSelectedBeneficiary(null)}
-              >
-                ×
-              </button>
-            </div>
-
-            <div className={styles.modalBody}>
-              <div className={styles.detailGrid}>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>受給者名</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.summary.name || "未登録"}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>フリガナ</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.summary.furigana || "未取得"}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>生年月日</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.summary.birthday || "未取得"}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>受給者番号</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.summary.number || "未取得"}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>自治体</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.summary.cityName || "未取得"}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>証種別</div>
-                  <div className={styles.detailValue}>{certTypeLabel(selectedBeneficiary.certType)}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>最終更新日</div>
-                  <div className={styles.detailValue}>{formatUpdatedAt(selectedBeneficiary)}</div>
-                </div>
-                <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>作成者</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.createdBy?.email || "不明"}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

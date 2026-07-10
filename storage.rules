@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Firestore側の users/{uid}.tenantId と同じテナント所属チェックを
+    // Storage側でも再現する（firestore.rulesの
+    // tenants/{tenantId}/beneficiaries ルールと同じモデル）。
+    function callerTenantId() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.tenantId;
+    }
+
+    match /tenants/{tenantId}/recipients/{recipientId}/{fileName} {
+      allow read, write: if request.auth != null && callerTenantId() == tenantId;
+    }
+
+    // 本機能追加以前に保存された受給者証画像（uploads/{uid}/...）を
+    // 引き続き閲覧できるようにするための読み取り専用ルール。
+    // アップロード者のtenantIdと閲覧者のtenantIdが一致すれば読める
+    // （Firestore側では既に同テナントの誰でもその受給者ドキュメントを
+    // 読めるため、旧パスの画像もそれに合わせる）。新規書き込みでは
+    // このパスは使用しない。
+    match /uploads/{uid}/{fileName} {
+      allow read: if request.auth != null &&
+        firestore.get(/databases/(default)/documents/users/$(uid)).data.tenantId == callerTenantId();
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

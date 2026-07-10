@@ -6,7 +6,6 @@ import { setGlobalOptions } from "firebase-functions/v2";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 
-import * as admin from "firebase-admin";
 import { ImageAnnotatorClient } from "@google-cloud/vision";
 
 // ===== Gen2 共通設定 =====
@@ -17,54 +16,52 @@ setGlobalOptions({
   maxInstances: 10,
 });
 
-// Firebase Admin 初期化（1回だけ）
-admin.initializeApp();
+// Callable Functionsのペイロードサイズを考慮した上限（Base64換算前のおおよそのバイト数）。
+// クライアント側で圧縮済みの画像を送る前提のため、通常はこれを大きく下回る。
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 /**
- * OCR: Storageパス（例: uploads/{uid}/xxx.jpg）を受け取り、
- * Cloud Vision APIで文字起こしして返す
+ * OCR: 画像データ（Base64）を直接受け取り、Cloud Vision APIで文字起こしして返す。
  *
- * フロントからは downloadURL ではなく storagePath を渡す
+ * 取込中（保存前）の受給者証はまだFirestore/Storageのどちらにも存在しないため、
+ * このFunctionはStorage・Firestoreのいずれにもアクセスしない
+ * （画像はブラウザ内で保持され、確定保存時に初めてStorageへアップロードされる）。
  */
-export const ocrFromStoragePath = onCall(async (req) => {
-  // 認証チェック
+export const ocrFromImageData = onCall(async (req) => {
+  // 認証チェック（Vision APIの濫用防止。取込中データはまだ存在しないためテナントチェックは不要）
   if (!req.auth) {
     throw new HttpsError("unauthenticated", "Authentication required");
   }
 
-  const storagePath = (req.data as any)?.storagePath as string | undefined;
+  const imageBase64 = (req.data as any)?.imageBase64 as string | undefined;
 
-  if (!storagePath) {
-    throw new HttpsError("invalid-argument", "storagePath is required");
+  if (!imageBase64) {
+    throw new HttpsError("invalid-argument", "imageBase64 is required");
   }
 
-  // 自分のアップロード配下のみ許可
-  if (!storagePath.startsWith(`uploads/${req.auth.uid}/`)) {
-    throw new HttpsError("permission-denied", "Invalid storagePath");
+  const approxBytes = (imageBase64.length * 3) / 4;
+  if (approxBytes > MAX_IMAGE_BYTES) {
+    throw new HttpsError("invalid-argument", "Image is too large");
   }
 
   try {
-    // Storage から画像取得
-    const bucket = admin.storage().bucket();
-    const [bytes] = await bucket.file(storagePath).download();
+    const buffer = Buffer.from(imageBase64, "base64");
 
-    // Vision OCR
     const client = new ImageAnnotatorClient();
     const [result] = await client.documentTextDetection({
-      image: { content: bytes },
+      image: { content: buffer },
     });
 
     const text = result.fullTextAnnotation?.text ?? "";
 
-    logger.info("ocrFromStoragePath raw text", {
-      storagePath,
+    logger.info("ocrFromImageData raw text", {
       textLength: text.length,
       text,
     });
 
     return { text };
   } catch (err: any) {
-    logger.error("ocrFromStoragePath error", err);
+    logger.error("ocrFromImageData error", err);
     throw new HttpsError("internal", err?.message ?? "OCR failed");
   }
 });
