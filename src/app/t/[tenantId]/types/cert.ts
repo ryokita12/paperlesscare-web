@@ -42,6 +42,27 @@ export type FormDataType = Record<string, string> & {
   servicePeriod8?: string;
   serviceAmount8?: string;
 
+  // ページ6：計画相談支援給付費 / 特定障害者特別給付費
+  supportPeriod?: string;
+  planOfficeName?: string;
+  monitoringPeriod?: string;
+  planStartDate?: string;
+  specialPaymentAmount?: string;
+  specialPaymentPeriod?: string;
+  specialPaymentPrevAmount?: string;
+  specialPaymentPrevPeriod?: string;
+
+  // ページ7・8：利用者負担に関する事項
+  burdenLimitAmount?: string;
+  burdenPeriod?: string;
+  burdenLimitAmountPrev?: string;
+  burdenPeriodPrev?: string;
+  mealProvisionStatus?: string;
+  managementTargetStatus?: string;
+  managementOfficeName?: string;
+  startDate?: string;
+  specialNotes?: string;
+
   contactInfo?: string;
   memo?: string;
 };
@@ -51,4 +72,6 @@ export type CertPage = {
   previewUrl: string;
   ocrText: string;
   formData: FormDataType;
+  // Firebase Storage 上のアップロード先パス（Firestore保存時に画像の参照として保持する）
+  storagePath: string;
 };

@@ -19,6 +19,7 @@ import PageTabs from "./components/PageTabs";
 import CertLayoutRenderer from "./components/certLayouts";
 import RecipientImportModeSelect from "./components/RecipientImportModeSelect";
 import { parseCertText } from "./lib/parsers/parseCertText";
+import { saveBeneficiary } from "./lib/firestore/beneficiaries";
 
 type OcrResponse = { text?: string };
 
@@ -47,6 +48,8 @@ export default function TenantHome() {
 
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
   const [activePageIndex, setActivePageIndex] = useState(initialPage);
   const [selectedCertType, setSelectedCertType] = useState<CertTypeId>("adult");
   const [pages, setPages] = useState<CertPage[]>(() =>
@@ -232,6 +235,7 @@ export default function TenantHome() {
         ...page,
         ocrText: text,
         formData: parsed,
+        storagePath: path,
       }));
 
       setStatus(
@@ -243,6 +247,39 @@ export default function TenantHome() {
       setStatus(`❌ Error: ${e.code || ""} ${e.message}`);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleSaveBeneficiary = async () => {
+    if (!user || saving) return;
+
+    if (completedCount === 0) {
+      setSaveMessage("⚠️ 少なくとも1ページ以上取り込んでから保存してください。");
+      return;
+    }
+
+    setSaving(true);
+    setSaveMessage("保存中...");
+
+    try {
+      const id = await saveBeneficiary({
+        tenantId,
+        certType: selectedCertType,
+        pageTitles: PAGE_TITLES,
+        pages: pagesRef.current,
+        user,
+      });
+
+      setSaveMessage(`✅ 保存しました（ID: ${id}）。「受給者管理」画面から確認できます。`);
+      setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
+      setActivePageIndex(0);
+      setStatus("");
+      setFlowStep("selectMode");
+      setImportMode(null);
+    } catch (e: any) {
+      setSaveMessage(`❌ 保存に失敗しました: ${e.code || ""} ${e.message || e}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -521,6 +558,30 @@ export default function TenantHome() {
               次のページ
             </button>
           </div>
+        </section>
+
+        <section className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold">③内容を確認して保存</div>
+              <div className="mt-1 text-xs opacity-70">
+                {completedCount} / {PAGE_COUNT} ページ取込済み。取り込んだ内容を確定してFirestoreに保存します。
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleSaveBeneficiary}
+              disabled={saving || completedCount === 0}
+              className="rounded-xl bg-black text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "確定して保存"}
+            </button>
+          </div>
+
+          {saveMessage && (
+            <div className="mt-3 text-sm">{saveMessage}</div>
+          )}
         </section>
       </div>
     </div>

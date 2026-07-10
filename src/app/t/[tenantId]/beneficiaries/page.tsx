@@ -1,40 +1,66 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 import styles from "./page.module.css";
+import { useRequireAuth } from "@/lib/auth";
+import { listBeneficiaries, type BeneficiaryRecord } from "../lib/firestore/beneficiaries";
+import { CERT_TYPES } from "../constants/certPages";
 
-const dummyBeneficiaries = [
-  {
-    id: "B-0001",
-    name: "山田 太郎",
-    kana: "ヤマダ タロウ",
-    birthDate: "2015-04-12",
-    number: "1234567890",
-    municipality: "名古屋市",
-    status: "利用中",
-  },
-  {
-    id: "B-0002",
-    name: "佐藤 花子",
-    kana: "サトウ ハナコ",
-    birthDate: "2014-09-03",
-    number: "2234567890",
-    municipality: "春日井市",
-    status: "利用中",
-  },
-  {
-    id: "B-0003",
-    name: "鈴木 一郎",
-    kana: "スズキ イチロウ",
-    birthDate: "2016-01-21",
-    number: "3234567890",
-    municipality: "小牧市",
-    status: "停止中",
-  },
-];
+function certTypeLabel(certType: string) {
+  return CERT_TYPES.find((t) => t.id === certType)?.colorName || certType;
+}
+
+function formatUpdatedAt(record: BeneficiaryRecord) {
+  const ts = record.updatedAt;
+  if (!ts) return "未取得";
+  try {
+    return ts.toDate().toLocaleString("ja-JP");
+  } catch {
+    return "未取得";
+  }
+}
 
 export default function BeneficiariesPage() {
-  const [selectedBeneficiary, setSelectedBeneficiary] = useState<(typeof dummyBeneficiaries)[number] | null>(null);
+  const params = useParams<{ tenantId: string }>();
+  const tenantId = params?.tenantId ?? "";
+  const { user, loading } = useRequireAuth();
+
+  const [beneficiaries, setBeneficiaries] = useState<BeneficiaryRecord[]>([]);
+  const [fetching, setFetching] = useState(true);
+  const [error, setError] = useState("");
+  const [selectedBeneficiary, setSelectedBeneficiary] = useState<BeneficiaryRecord | null>(null);
+
+  useEffect(() => {
+    if (!user || !tenantId) return;
+
+    let cancelled = false;
+    setFetching(true);
+    setError("");
+
+    listBeneficiaries(tenantId)
+      .then((records) => {
+        if (!cancelled) setBeneficiaries(records);
+      })
+      .catch((e: any) => {
+        if (!cancelled) setError(e.message || "受給者一覧の取得に失敗しました");
+      })
+      .finally(() => {
+        if (!cancelled) setFetching(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, tenantId]);
+
+  if (loading || fetching) {
+    return (
+      <div className={styles.page}>
+        <div className="text-sm">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.page}>
@@ -98,44 +124,48 @@ export default function BeneficiariesPage() {
       <div className={styles.listCard}>
         <div className={styles.listHeader}>
           <div className={styles.cardTitle}>受給者一覧</div>
-          <div className={styles.count}>3件</div>
+          <div className={styles.count}>{beneficiaries.length}件</div>
         </div>
+
+        {error && (
+          <div className="mb-3 text-sm text-red-600">⚠️ {error}</div>
+        )}
 
         <div className={styles.tableWrap}>
           <table className={styles.table}>
             <thead>
               <tr>
-								<th className={styles.alignCenter}>受給者ID</th>
 								<th className={styles.alignLeft}>受給者名</th>
-								<th className={styles.alignCenter}>生年月日</th>
 								<th className={styles.alignCenter}>受給者番号</th>
-								<th className={styles.alignLeft}>自治体</th>
-								<th className={styles.alignCenter}>利用状況</th>
+								<th className={styles.alignCenter}>生年月日</th>
+								<th className={styles.alignLeft}>証種別</th>
+								<th className={styles.alignCenter}>最終更新日</th>
 							</tr>
             </thead>
             <tbody>
-							{dummyBeneficiaries.map((item) => (
+							{beneficiaries.map((item) => (
 								<tr
 									key={item.id}
 									className={styles.tableRow}
 									onClick={() => setSelectedBeneficiary(item)}
 								>
-                  <td className={styles.alignCenter}>{item.id}</td>
-									<td className={styles.alignLeft}>{item.name}</td>
-									<td className={styles.alignCenter}>{item.birthDate}</td>
-									<td className={styles.alignCenter}>{item.number}</td>
-									<td className={styles.alignLeft}>{item.municipality}</td>
-									<td className={styles.alignCenter}>
-                    <span
-                      className={
-                        item.status === "利用中" ? styles.badgeActive : styles.badgeInactive
-                      }
-                    >
-                      {item.status}
-                    </span>
+									<td className={styles.alignLeft}>{item.summary.name || "未登録"}</td>
+									<td className={styles.alignCenter}>{item.summary.number || "未取得"}</td>
+									<td className={styles.alignCenter}>{item.summary.birthday || "未取得"}</td>
+									<td className={styles.alignLeft}>
+                    <span className={styles.badgeActive}>{certTypeLabel(item.certType)}</span>
                   </td>
+                  <td className={styles.alignCenter}>{formatUpdatedAt(item)}</td>
                 </tr>
               ))}
+
+              {beneficiaries.length === 0 && !error && (
+                <tr>
+                  <td className={styles.alignCenter} colSpan={5}>
+                    まだ登録された受給者がいません。「受給者証取込＆送信」から取り込んでください。
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -164,28 +194,36 @@ export default function BeneficiariesPage() {
             <div className={styles.modalBody}>
               <div className={styles.detailGrid}>
                 <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>受給者ID</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.id}</div>
+                  <div className={styles.detailLabel}>受給者名</div>
+                  <div className={styles.detailValue}>{selectedBeneficiary.summary.name || "未登録"}</div>
                 </div>
                 <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>受給者名</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.name}</div>
+                  <div className={styles.detailLabel}>フリガナ</div>
+                  <div className={styles.detailValue}>{selectedBeneficiary.summary.furigana || "未取得"}</div>
                 </div>
                 <div className={styles.detailItem}>
                   <div className={styles.detailLabel}>生年月日</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.birthDate}</div>
+                  <div className={styles.detailValue}>{selectedBeneficiary.summary.birthday || "未取得"}</div>
                 </div>
                 <div className={styles.detailItem}>
                   <div className={styles.detailLabel}>受給者番号</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.number}</div>
+                  <div className={styles.detailValue}>{selectedBeneficiary.summary.number || "未取得"}</div>
                 </div>
                 <div className={styles.detailItem}>
                   <div className={styles.detailLabel}>自治体</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.municipality}</div>
+                  <div className={styles.detailValue}>{selectedBeneficiary.summary.cityName || "未取得"}</div>
                 </div>
                 <div className={styles.detailItem}>
-                  <div className={styles.detailLabel}>利用状況</div>
-                  <div className={styles.detailValue}>{selectedBeneficiary.status}</div>
+                  <div className={styles.detailLabel}>証種別</div>
+                  <div className={styles.detailValue}>{certTypeLabel(selectedBeneficiary.certType)}</div>
+                </div>
+                <div className={styles.detailItem}>
+                  <div className={styles.detailLabel}>最終更新日</div>
+                  <div className={styles.detailValue}>{formatUpdatedAt(selectedBeneficiary)}</div>
+                </div>
+                <div className={styles.detailItem}>
+                  <div className={styles.detailLabel}>作成者</div>
+                  <div className={styles.detailValue}>{selectedBeneficiary.createdBy?.email || "不明"}</div>
                 </div>
               </div>
             </div>

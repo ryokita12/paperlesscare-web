@@ -8,6 +8,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // テナント単位の受給者証データ。
+    // users/{uid}.tenantId が一致するログインユーザーのみ読み書き可能。
+    match /tenants/{tenantId}/beneficiaries/{beneficiaryId} {
+      allow read, write: if request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

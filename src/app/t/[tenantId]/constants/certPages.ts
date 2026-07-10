@@ -120,6 +120,26 @@ export const emptyFormData = (): FormDataType => ({
   servicePeriod3: "",
   serviceAmount3: "",
 
+  supportPeriod: "",
+  planOfficeName: "",
+  monitoringPeriod: "",
+  planStartDate: "",
+  specialPaymentAmount: "",
+  specialPaymentPeriod: "",
+  specialPaymentPrevAmount: "",
+  specialPaymentPrevPeriod: "",
+
+  burdenLimitAmount: "",
+  burdenPeriod: "",
+  burdenLimitAmountPrev: "",
+  burdenPeriodPrev: "",
+  mealProvisionStatus: "",
+  managementTargetStatus: "",
+  managementOfficeName: "",
+  startDate: "",
+  specialNotes: "",
+  contactInfo: "",
+
   memo: "",
 });
 
@@ -128,4 +148,5 @@ export const createEmptyPage = (): CertPage => ({
   previewUrl: "",
   ocrText: "",
   formData: emptyFormData(),
+  storagePath: "",
 });

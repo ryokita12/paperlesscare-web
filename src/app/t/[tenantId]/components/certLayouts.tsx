@@ -66,7 +66,9 @@ function EditableCertCell({
 
   return (
     <div className={`flex items-start justify-between gap-2 ${className}`}>
-      <div className="whitespace-pre-wrap">{value}</div>
+      <div className={`whitespace-pre-wrap ${value ? "" : "text-zinc-400"}`}>
+        {value || "未取得"}
+      </div>
       <button
         type="button"
         className="shrink-0 rounded border px-2 py-1 text-xs hover:bg-zinc-50"
@@ -424,7 +426,7 @@ function LayoutType4({ pageTitle, page, onChangeField }: LayoutProps) {
   );
 }
 
-function LayoutType5({ pageTitle, page }: { pageTitle: string; page: CertPage }) {
+function LayoutType5({ pageTitle, page, onChangeField }: LayoutProps) {
   return (
     <div className="min-w-full border cert-table">
       <div className="border-b cert-title">
@@ -433,7 +435,9 @@ function LayoutType5({ pageTitle, page }: { pageTitle: string; page: CertPage })
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">受給者証番号</div>
-        <div className="cert-cell">{page.formData.number}</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.number} field="number" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[30px_110px_1fr] border-b cert-row-lg">
@@ -447,10 +451,18 @@ function LayoutType5({ pageTitle, page }: { pageTitle: string; page: CertPage })
           <div className="flex items-center justify-center">生年月日</div>
         </div>
         <div className="grid grid-rows-[40px_40px_40px_1fr]">
-          <div className="border-b cert-cell whitespace-pre-wrap">{page.formData.address}</div>
-          <div className="border-b cert-cell"></div>
-          <div className="border-b cert-cell">{page.formData.name}</div>
-          <div className="cert-cell">{page.formData.birthday}</div>
+          <div className="border-b cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.address} field="address" onChangeField={onChangeField} multiline />
+          </div>
+          <div className="border-b cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.furigana} field="furigana" onChangeField={onChangeField} />
+          </div>
+          <div className="border-b cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.name} field="name" onChangeField={onChangeField} />
+          </div>
+          <div className="cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.birthday} field="birthday" onChangeField={onChangeField} />
+          </div>
         </div>
       </div>
 
@@ -464,20 +476,34 @@ function LayoutType5({ pageTitle, page }: { pageTitle: string; page: CertPage })
           <div className="flex items-center justify-center">生年月日</div>
         </div>
         <div className="grid grid-rows-[40px_40px_1fr]">
-          <div className="border-b cert-cell"></div>
-          <div className="border-b cert-cell">{page.formData.childName}</div>
-          <div className="cert-cell">{page.formData.childBirthday}</div>
+          <div className="border-b cert-cell text-sm font-medium">
+            <EditableCertCell
+              value={page.formData.childFurigana}
+              field="childFurigana"
+              onChangeField={onChangeField}
+            />
+          </div>
+          <div className="border-b cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.childName} field="childName" onChangeField={onChangeField} />
+          </div>
+          <div className="cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.childBirthday} field="childBirthday" onChangeField={onChangeField} />
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">障害種別</div>
-        <div className="cert-cell">{page.formData.disabilityType}</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.disabilityType} field="disabilityType" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">交付年月日</div>
-        <div className="cert-cell">{page.formData.issueDate}</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.issueDate} field="issueDate" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] cert-row-md">
@@ -485,13 +511,15 @@ function LayoutType5({ pageTitle, page }: { pageTitle: string; page: CertPage })
           <div>支給市町村名</div>
           <div className="mt-3">及び印</div>
         </div>
-        <div className="cert-cell">{page.formData.cityName}</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.cityName} field="cityName" onChangeField={onChangeField} />
+        </div>
       </div>
     </div>
   );
 }
 
-function LayoutType6({ pageTitle, page }: { pageTitle: string; page: CertPage }) {
+function LayoutType6({ pageTitle, page, onChangeField }: LayoutProps) {
   return (
     <div className="min-w-full border cert-table">
       <div className="border-b cert-title">
@@ -500,24 +528,32 @@ function LayoutType6({ pageTitle, page }: { pageTitle: string; page: CertPage })
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">支給期間</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.supportPeriod || ""} field="supportPeriod" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b cert-row-md">
         <div className="border-r cert-cell text-center">
           指定特定相談支援事業所名
         </div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.planOfficeName || ""} field="planOfficeName" onChangeField={onChangeField} multiline />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b cert-row-md">
         <div className="border-r cert-cell text-center">モニタリング期間</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.monitoringPeriod || ""} field="monitoringPeriod" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">開始年月日</div>
-        <div className="cert-cell text-center">年　　月　　日</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.planStartDate || ""} field="planStartDate" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="border-b cert-title">
@@ -526,33 +562,43 @@ function LayoutType6({ pageTitle, page }: { pageTitle: string; page: CertPage })
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">支給額</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.specialPaymentAmount || ""} field="specialPaymentAmount" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">適用期間</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.specialPaymentPeriod || ""} field="specialPaymentPeriod" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">変更前の支給額</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.specialPaymentPrevAmount || ""} field="specialPaymentPrevAmount" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">変更前の適用期間</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.specialPaymentPrevPeriod || ""} field="specialPaymentPrevPeriod" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] cert-row-lg">
         <div className="border-r cert-cell text-center">（予備欄）</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.memo || ""} field="memo" onChangeField={onChangeField} multiline />
+        </div>
       </div>
     </div>
   );
 }
 
-function LayoutType7({ pageTitle, page }: { pageTitle: string; page: CertPage }) {
+function LayoutType7({ pageTitle, page, onChangeField }: LayoutProps) {
   return (
     <div className="min-w-full border cert-table">
       <div className="border-b cert-title">
@@ -561,63 +607,75 @@ function LayoutType7({ pageTitle, page }: { pageTitle: string; page: CertPage })
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">負担上限月額</div>
-        <div className="cert-cell text-center">4,600 円</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.burdenLimitAmount || ""} field="burdenLimitAmount" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">適用期間</div>
-        <div className="cert-cell text-center">
-          令和 7年11月 1日から令和 8年10月31日まで
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.burdenPeriod || ""} field="burdenPeriod" onChangeField={onChangeField} />
         </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">変更前の負担上限月額</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.burdenLimitAmountPrev || ""} field="burdenLimitAmountPrev" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">変更前の適用期間</div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.burdenPeriodPrev || ""} field="burdenPeriodPrev" onChangeField={onChangeField} />
+        </div>
       </div>
 
-      <div className="border-b cert-cell text-center">
-        （食事提供体制加算　該当）
+      <div className="grid grid-cols-[140px_1fr] border-b">
+        <div className="border-r cert-cell text-center">食事提供体制加算</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.mealProvisionStatus || ""} field="mealProvisionStatus" onChangeField={onChangeField} />
+        </div>
       </div>
 
-      <div className="grid grid-cols-[1fr_120px] border-b">
+      <div className="grid grid-cols-[1fr_140px] border-b">
         <div className="border-r cert-cell text-center">
           利用者負担上限額管理対象者該当の有無
         </div>
-        <div className="cert-cell text-center">該当</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.managementTargetStatus || ""} field="managementTargetStatus" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b cert-row-md">
         <div className="border-r cert-cell text-center">
           利用者負担上限額管理事業所名
         </div>
-        <div className="cert-cell"></div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.managementOfficeName || ""} field="managementOfficeName" onChangeField={onChangeField} multiline />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r cert-cell text-center">開始年月日</div>
-        <div className="cert-cell text-center">年　　月　　日</div>
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.startDate || ""} field="startDate" onChangeField={onChangeField} />
+        </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b cert-row-md">
         <div className="border-r cert-cell text-center">特記事項欄</div>
-        <div className="cert-cell whitespace-pre-wrap text-center">
-          計画相談支援（障害児相談支援対象者）
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.specialNotes || ""} field="specialNotes" onChangeField={onChangeField} multiline />
         </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr]">
         <div className="border-r cert-cell text-center">問い合わせ先</div>
-        <div className="cert-cell whitespace-pre-wrap text-center">
-          名古屋市南区西恵支所{"\n"}
-          区民福祉課　障害福祉担当{"\n"}
-          電　話：（052）878-2508（直通）{"\n"}
-          ＦＡＸ：（052）875-2215
+        <div className="cert-cell text-sm font-medium">
+          <EditableCertCell value={page.formData.contactInfo || ""} field="contactInfo" onChangeField={onChangeField} multiline />
         </div>
       </div>
     </div>
@@ -664,14 +722,44 @@ export default function CertLayoutRenderer({
         />
       );
     case 4:
-  		return <LayoutType5 pageTitle={pageTitle} page={page} />;
+      return (
+        <LayoutType5
+          pageTitle={pageTitle}
+          page={page}
+          onChangeField={onChangeField}
+        />
+      );
     case 5:
-  		return <LayoutType6 pageTitle={pageTitle} page={page} />;
+      return (
+        <LayoutType6
+          pageTitle={pageTitle}
+          page={page}
+          onChangeField={onChangeField}
+        />
+      );
     case 6:
-  		return <LayoutType7 pageTitle={pageTitle} page={page} />;
+      return (
+        <LayoutType7
+          pageTitle={pageTitle}
+          page={page}
+          onChangeField={onChangeField}
+        />
+      );
     case 7:
-      return <LayoutType7 pageTitle={pageTitle} page={page} />;
+      return (
+        <LayoutType7
+          pageTitle={pageTitle}
+          page={page}
+          onChangeField={onChangeField}
+        />
+      );
     default:
-      return <LayoutType7 pageTitle={pageTitle} page={page} />;
+      return (
+        <LayoutType7
+          pageTitle={pageTitle}
+          page={page}
+          onChangeField={onChangeField}
+        />
+      );
   }
 }
