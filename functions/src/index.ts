@@ -20,6 +20,30 @@ setGlobalOptions({
 // クライアント側で圧縮済みの画像を送る前提のため、通常はこれを大きく下回る。
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
+// ログに残してよい受給者証種別。クライアントから届いた値をそのまま出力せず、
+// この一覧に含まれる場合だけ記録する。
+const LOGGABLE_CERT_TYPES = ["mobility", "adult", "child"] as const;
+
+/**
+ * ログ用の診断メタデータ（個人情報を含まない）を組み立てる。
+ * 受給者証の本文・氏名・住所・受給者番号等は一切含めない。
+ */
+function buildLogContext(data: unknown): { pageNo?: number; certType?: string } {
+  const payload = (data ?? {}) as { pageNo?: unknown; certType?: unknown };
+
+  const pageNo =
+    typeof payload.pageNo === "number" &&
+    Number.isInteger(payload.pageNo) &&
+    payload.pageNo >= 1 &&
+    payload.pageNo <= 8 ?
+      payload.pageNo :
+      undefined;
+
+  const certType = LOGGABLE_CERT_TYPES.find((t) => t === payload.certType);
+
+  return { pageNo, certType };
+}
+
 /**
  * OCR: 画像データ（Base64）を直接受け取り、Cloud Vision APIで文字起こしして返す。
  *
@@ -33,9 +57,12 @@ export const ocrFromImageData = onCall(async (req) => {
     throw new HttpsError("unauthenticated", "Authentication required");
   }
 
-  const imageBase64 = (req.data as any)?.imageBase64 as string | undefined;
+  const logContext = buildLogContext(req.data);
 
-  if (!imageBase64) {
+  const imageBase64 = (req.data as { imageBase64?: unknown } | undefined)
+    ?.imageBase64;
+
+  if (typeof imageBase64 !== "string" || !imageBase64) {
     throw new HttpsError("invalid-argument", "imageBase64 is required");
   }
 
@@ -54,14 +81,33 @@ export const ocrFromImageData = onCall(async (req) => {
 
     const text = result.fullTextAnnotation?.text ?? "";
 
-    logger.info("ocrFromImageData raw text", {
+    // OCR本文には氏名・住所・生年月日・受給者番号が含まれるため、
+    // Cloud Loggingへは本文を出力せず、診断に必要な件数情報のみ記録する。
+    logger.info("ocrFromImageData completed", {
+      ...logContext,
       textLength: text.length,
-      text,
     });
 
     return { text };
-  } catch (err: any) {
-    logger.error("ocrFromImageData error", err);
-    throw new HttpsError("internal", err?.message ?? "OCR failed");
+  } catch (err: unknown) {
+    // err が null / undefined でもここで例外にならないようにしておく
+    // （分割代入が失敗するとcatch内から抜けてしまい、ログも残らなくなる）
+    const { code, message } = (err ?? {}) as {
+      code?: unknown;
+      message?: unknown;
+    };
+
+    // Vision API のエラーオブジェクトには送信内容が含まれうるため、
+    // オブジェクト全体ではなくコード・メッセージのみを記録する。
+    logger.error("ocrFromImageData failed", {
+      ...logContext,
+      code,
+      message,
+    });
+
+    throw new HttpsError(
+      "internal",
+      typeof message === "string" ? message : "OCR failed"
+    );
   }
 });

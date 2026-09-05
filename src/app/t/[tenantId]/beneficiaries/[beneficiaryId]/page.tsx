@@ -9,7 +9,13 @@ import {
   type BeneficiaryRecord,
   type SavedCertPage,
 } from "../../lib/firestore/beneficiaries";
-import { PAGE_COUNT, PAGE_DEFINITIONS, emptyFormData } from "../../constants/certPages";
+import {
+  PAGE_COUNT,
+  getPageDefinitions,
+  getPageTitle,
+  emptyFormData,
+  type CertTypeId,
+} from "../../constants/certPages";
 import type { FormDataType } from "../../types/cert";
 import CertLayoutRenderer from "../../components/certLayouts";
 import CertImageViewer from "./CertImageViewer";
@@ -17,14 +23,17 @@ import EditPageSwitcher from "./EditPageSwitcher";
 
 // 8ページに満たない旧データ（今回の修正前に登録された受給者など）を、
 // 画像なし・項目未取得の空ページで補って常にPAGE_COUNT件になるようにする。
-function padPages(pages: SavedCertPage[]): SavedCertPage[] {
+function padPages(
+  pages: SavedCertPage[],
+  certType: CertTypeId
+): SavedCertPage[] {
   return Array.from({ length: PAGE_COUNT }, (_, index) => {
     const existing = pages[index];
     if (existing) return existing;
 
     return {
       pageNo: index + 1,
-      title: PAGE_DEFINITIONS[index]?.title || `ページ ${index + 1}`,
+      title: getPageDefinitions(certType)[index]?.title || `ページ ${index + 1}`,
       formData: emptyFormData(),
       ocrText: "",
       storagePath: "",
@@ -65,7 +74,7 @@ export default function BeneficiaryEditPage() {
         }
 
         setRecord(rec);
-        setEditedPages(padPages(rec.pages));
+        setEditedPages(padPages(rec.pages, rec.certType));
       })
       .catch((e: unknown) => {
         if (!cancelled) {
@@ -120,7 +129,7 @@ export default function BeneficiaryEditPage() {
       const refreshed = await getBeneficiary(tenantId, beneficiaryId);
       if (refreshed) {
         setRecord(refreshed);
-        setEditedPages(padPages(refreshed.pages));
+        setEditedPages(padPages(refreshed.pages, refreshed.certType));
       }
 
       setDirty(false);
@@ -182,8 +191,10 @@ export default function BeneficiaryEditPage() {
   }
 
   const currentPage = editedPages[activePageIndex];
-  const currentPageTitle =
-    PAGE_DEFINITIONS[activePageIndex]?.title || `ページ ${activePageIndex + 1}`;
+  // Firestoreに保存済みの受給者証種別に従って帳票を描画する
+  // （旧データで certType が欠けている場合は読み取り時に "adult" へ補完済み）。
+  const certType = record.certType;
+  const currentPageTitle = getPageTitle(certType, activePageIndex);
 
   return (
     <div className="space-y-6 overflow-x-hidden">
@@ -214,6 +225,7 @@ export default function BeneficiaryEditPage() {
         <section className="rounded-2xl border bg-white p-4 shadow-sm md:sticky md:top-4 md:self-start">
           <div className="mb-3 text-sm font-semibold">取り込み画像</div>
           <EditPageSwitcher
+            certType={certType}
             pages={editedPages}
             activePageIndex={activePageIndex}
             onChangePage={setActivePageIndex}
@@ -231,6 +243,7 @@ export default function BeneficiaryEditPage() {
 
           <div className="w-full max-w-full overflow-x-auto">
             <CertLayoutRenderer
+              certType={certType}
               pageIndex={activePageIndex}
               pageTitle={currentPageTitle}
               page={{

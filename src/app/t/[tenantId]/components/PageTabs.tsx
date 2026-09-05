@@ -1,9 +1,9 @@
-import { PAGE_DEFINITIONS } from "../constants/certPages";
+import { getPageDefinitions, type CertTypeId } from "../constants/certPages";
 
 type Props = {
   pages: { previewUrl: string }[];
   activePageIndex: number;
-  selectedCertType: "mobility" | "adult" | "child";
+  selectedCertType: CertTypeId;
   onChangePage: (index: number) => void;
 };
 
@@ -13,13 +13,15 @@ export default function PageTabs({
   selectedCertType,
   onChangePage,
 }: Props) {
+  const pageDefinitions = getPageDefinitions(selectedCertType);
+
   const renderPageButton = (page: { previewUrl: string }, index: number) => {
     // 画像は確定保存時までStorageへアップロードしないため、storagePathは判定に使わない。
     // previewUrl（blob:）はページ再読み込み・セッション復元をまたぐと消えるため、
     // その場合は意図どおり「未取込」に戻る。
     const done = !!page.previewUrl;
     const active = index === activePageIndex;
-    const definition = PAGE_DEFINITIONS[index];
+    const definition = pageDefinitions[index];
 
     return (
       <button

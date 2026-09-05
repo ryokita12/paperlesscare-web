@@ -9,11 +9,11 @@ import { useRequireAuth } from "@/lib/auth";
 import type { CertPage } from "./types/cert";
 import {
   PAGE_COUNT,
-  PAGE_TITLES,
   CERT_TYPES,
   type CertTypeId,
   emptyFormData,
   createEmptyPage,
+  getPageTitle,
 } from "./constants/certPages";
 import PageTabs from "./components/PageTabs";
 import CertLayoutRenderer from "./components/certLayouts";
@@ -25,8 +25,22 @@ import {
   type SavedCertPage,
 } from "./lib/firestore/beneficiaries";
 import { compressImageToJpeg } from "./lib/image/compressImage";
+import {
+  clearPageImages,
+  deletePageImage,
+  loadPageImages,
+  savePageImage,
+} from "./lib/storage/importImageStore";
 
 type OcrResponse = { text?: string };
+
+// pageNo / certType は個人情報を含まない診断用のメタデータ。
+// Functions側のログに「どのページ・どの種別で失敗したか」を残すために送る。
+type OcrRequest = {
+  imageBase64: string;
+  pageNo?: number;
+  certType?: CertTypeId;
+};
 
 // OCR用に画像をCallable Functionへ渡すため、Base64文字列（data:URLのプレフィックスなし）に変換する
 function fileToBase64(file: File): Promise<string> {
@@ -170,12 +184,12 @@ export default function TenantHome() {
 
   const nextPath = useMemo(() => `/t/${tenantId || "aaaa"}`, [tenantId]);
   const currentPage = pages[activePageIndex];
-  const currentPageTitle = PAGE_TITLES[activePageIndex] || `ページ ${activePageIndex + 1}`;
+  const currentPageTitle = getPageTitle(selectedCertType, activePageIndex);
   const currentCertType = CERT_TYPES.find((type) => type.id === selectedCertType) || CERT_TYPES[0];
   // 画像は確定保存時まで一切アップロードしないため、「取込済み」の判定は
   // ブラウザ内に保持しているFile（selectedFile）の有無で行う。
-  // ページ再読み込みやセッション復元をまたぐとFileは保持できないため、
-  // その場合は再度この画面で画像を選び直す必要がある。
+  // Fileはスマホ撮影への往復やページ再読み込みでReactのstateからは失われるが、
+  // IndexedDB（importImageStore）へ退避しておき、下の復元effectで戻す。
   const completedCount = pages.filter((page) => !!page.selectedFile).length;
 
   const updateCurrentPage = (updater: (page: CertPage) => CertPage) => {
@@ -260,6 +274,56 @@ export default function TenantHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, activePageIndex, loading, user]);
 
+  // スマホ撮影（別ルート）からの復路やページ再読み込みでは、Reactのstateに
+  // 持っていたFileが失われる。sessionStorageにはformData/ocrTextしか退避できないため、
+  // 画像はIndexedDBから復元してselectedFile/previewUrlを埋め直す。
+  // ここで埋めるのは「まだ画像を持っていないページ」だけにして、
+  // 撮影直後の復路でそのページに設定済みの新しい画像を上書きしないようにする。
+  useEffect(() => {
+    if (loading || !user || !tenantId || !beneficiaryId) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const restored = await loadPageImages(tenantId, beneficiaryId);
+      if (cancelled || restored.length === 0) return;
+
+      const targets = restored.filter(
+        (item) => !pagesRef.current[item.pageIndex]?.selectedFile
+      );
+      if (targets.length === 0) return;
+
+      // blob URLの生成はsetPagesの更新関数の外で行う。
+      // 更新関数を純粋に保つことで、Strict Modeの二重呼び出しでも
+      // 同じURLが使われ、未解放のblob URLが増えないようにする。
+      const previews = targets.map((item) => ({
+        pageIndex: item.pageIndex,
+        file: item.file,
+        previewUrl: URL.createObjectURL(item.file),
+      }));
+
+      setPages((prev) =>
+        prev.map((page, index) => {
+          // 撮影直後の復路でこのページに新しい画像が入っている場合は上書きしない
+          if (page.selectedFile) return page;
+
+          const match = previews.find((item) => item.pageIndex === index);
+          if (!match) return page;
+
+          return {
+            ...page,
+            selectedFile: match.file,
+            previewUrl: match.previewUrl,
+          };
+        })
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, beneficiaryId, loading, user]);
+
   useEffect(() => {
     return () => {
       pagesRef.current.forEach((page) => {
@@ -278,6 +342,8 @@ export default function TenantHome() {
     updateCurrentPage(() => createEmptyPage());
     setStatus("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+
+    void deletePageImage({ tenantId, beneficiaryId, pageIndex: activePageIndex });
   };
 
   const onPickClick = () => {
@@ -333,6 +399,15 @@ export default function TenantHome() {
       formData: emptyFormData(),
     }));
 
+    // スマホ撮影への往復・ページ再読み込みをまたいでも画像を失わないよう、
+    // 選択した時点でIndexedDBへ退避しておく（Firebaseへのアップロードは確定保存時のまま）。
+    void savePageImage({
+      tenantId,
+      beneficiaryId,
+      pageIndex: activePageIndex,
+      file: finalFile,
+    });
+
     setStatus(
       `✅ ${activePageIndex + 1}/${PAGE_COUNT} の画像を選択しました。内容を確認して「取込開始」を押してください。`
     );
@@ -373,23 +448,28 @@ export default function TenantHome() {
     try {
       const imageBase64 = await fileToBase64(file);
 
-      const ocrFromImageData = httpsCallable<{ imageBase64: string }, OcrResponse>(
+      const ocrFromImageData = httpsCallable<OcrRequest, OcrResponse>(
         functions,
         "ocrFromImageData"
       );
 
-      const res = await ocrFromImageData({ imageBase64 });
+      const res = await ocrFromImageData({
+        imageBase64,
+        pageNo: activePageIndex + 1,
+        certType: selectedCertType,
+      });
       const text = res.data?.text ?? "";
 
-      console.log("OCR RAW TEXT", text);
+      const parsed = parseCertText(text, activePageIndex, selectedCertType);
 
-      const parsed = parseCertText(
-        text,
-        activePageIndex,
-        selectedCertType
-      );
-
-      console.log("PARSED CERT DATA", parsed);
+      // OCR本文・抽出結果には氏名/住所/受給者番号などが含まれるため出力しない。
+      // 調査に必要な範囲（どのページ・どの種別で何文字取れたか）だけを残す。
+      console.info("[OCR] completed", {
+        pageNo: activePageIndex + 1,
+        certType: selectedCertType,
+        textLength: text.length,
+        filledFieldCount: Object.values(parsed).filter(Boolean).length,
+      });
 
       updateCurrentPage((page) => ({
         ...page,
@@ -453,7 +533,7 @@ export default function TenantHome() {
 
         savedPages.push({
           pageNo,
-          title: PAGE_TITLES[index] || `ページ ${pageNo}`,
+          title: getPageTitle(selectedCertType, index),
           formData: page.formData,
           ocrText: page.ocrText,
           storagePath: pageStoragePath,
@@ -477,6 +557,7 @@ export default function TenantHome() {
       setFlowStep("selectMode");
       setImportMode(null);
       clearImportSession(tenantId);
+      void clearPageImages(tenantId);
     } catch (e: unknown) {
       // アップロード失敗時・Firestore保存失敗時のいずれも、今回アップロード済みの
       // 画像は孤立させず可能な範囲で削除する。入力内容・OCR結果（pages）はそのまま
@@ -527,6 +608,7 @@ export default function TenantHome() {
               // 受給者IDも新しく採番し直し、前回の取込フォルダとは別の
               // Storageパスに画像を保存する。
               clearImportSession(tenantId);
+              void clearPageImages(tenantId);
               setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
               setBeneficiaryId(reserveBeneficiaryId(tenantId));
               setFlowStep("import");
@@ -600,6 +682,7 @@ export default function TenantHome() {
                 setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
                 setStatus("");
                 clearImportSession(tenantId);
+                void clearPageImages(tenantId);
               }}
               disabled={busy}
               className="rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
@@ -737,6 +820,7 @@ export default function TenantHome() {
 
               <div className="mt-4 w-full max-w-full overflow-x-auto">
                 <CertLayoutRenderer
+                  certType={selectedCertType}
                   pageIndex={activePageIndex}
                   pageTitle={currentPageTitle}
                   page={currentPage}

@@ -87,6 +87,34 @@ export const PAGE_DEFINITIONS = [
 
 export const PAGE_TITLES = PAGE_DEFINITIONS.map((page) => page.title);
 
+export type PageDefinition = (typeof PAGE_DEFINITIONS)[number];
+
+// 受給者証種別ごとのページ構成。
+// 現時点では3種別とも同一の様式（public/cert-samples/ の各画像を確認した結果、
+// 18歳未満＝黄緑色の様式は18歳以上＝紫色と色以外ほぼ同一）のため同じ定義を参照する。
+// 種別ごとに様式が異なることが判明した時点で、ここだけを差し替えれば
+// 呼び出し側（取込画面・編集画面・ページタブ）に手を入れずに対応できる。
+const PAGE_DEFINITIONS_BY_CERT_TYPE: Record<
+  CertTypeId,
+  readonly PageDefinition[]
+> = {
+  mobility: PAGE_DEFINITIONS,
+  adult: PAGE_DEFINITIONS,
+  child: PAGE_DEFINITIONS,
+};
+
+export function getPageDefinitions(
+  certType: CertTypeId
+): readonly PageDefinition[] {
+  return PAGE_DEFINITIONS_BY_CERT_TYPE[certType] ?? PAGE_DEFINITIONS;
+}
+
+export function getPageTitle(certType: CertTypeId, pageIndex: number): string {
+  return (
+    getPageDefinitions(certType)[pageIndex]?.title || `ページ ${pageIndex + 1}`
+  );
+}
+
 export const emptyFormData = (): FormDataType => ({
   number: "",
 
@@ -119,6 +147,26 @@ export const emptyFormData = (): FormDataType => ({
   serviceType3: "",
   servicePeriod3: "",
   serviceAmount3: "",
+
+  serviceType4: "",
+  servicePeriod4: "",
+  serviceAmount4: "",
+
+  serviceType5: "",
+  servicePeriod5: "",
+  serviceAmount5: "",
+
+  serviceType6: "",
+  servicePeriod6: "",
+  serviceAmount6: "",
+
+  serviceType7: "",
+  servicePeriod7: "",
+  serviceAmount7: "",
+
+  serviceType8: "",
+  servicePeriod8: "",
+  serviceAmount8: "",
 
   supportPeriod: "",
   planOfficeName: "",

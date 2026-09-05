@@ -12,6 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 旧ソースのスナップショット。next build の対象外だがlint/tscには拾われ、
+    // 現行コードの指摘が埋もれるため対象外にする（tsconfig.json の exclude と対）。
+    "src_20260514_1/**",
+    "src_20260519_1/**",
+    // ビルド成果物・ベンダー配布物（いずれもgit管理外）。
+    // functions/src は引き続きlint対象。
+    "functions/lib/**",
+    "google-cloud-sdk/**",
   ]),
 ]);
 

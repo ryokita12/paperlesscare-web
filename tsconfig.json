@@ -32,6 +32,10 @@
   "exclude": [
     "node_modules",
     "functions",
-    "functions/**"
+    "functions/**",
+    "src_20260514_1",
+    "src_20260514_1/**",
+    "src_20260519_1",
+    "src_20260519_1/**"
   ]
 }

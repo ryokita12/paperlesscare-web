@@ -1,17 +1,23 @@
 "use client";
 
-import { PAGE_DEFINITIONS } from "../../constants/certPages";
+import { getPageDefinitions, type CertTypeId } from "../../constants/certPages";
 
 type Props = {
+  certType: CertTypeId;
   pages: { storagePath: string }[];
   activePageIndex: number;
   onChangePage: (index: number) => void;
 };
 
-export default function EditPageSwitcher({ pages, activePageIndex, onChangePage }: Props) {
+export default function EditPageSwitcher({
+  certType,
+  pages,
+  activePageIndex,
+  onChangePage,
+}: Props) {
   return (
     <div className="mb-4 grid grid-cols-4 gap-2 sm:grid-cols-8">
-      {PAGE_DEFINITIONS.map((def, index) => {
+      {getPageDefinitions(certType).map((def, index) => {
         const active = index === activePageIndex;
         const hasImage = !!pages[index]?.storagePath;
 

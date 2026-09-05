@@ -14,6 +14,14 @@ export type FormDataType = Record<string, string> & {
 
   certPeriod?: string;
 
+  // ページ2：介護給付費の支給決定内容 1組目
+  // 以前は人物情報用の name / birthday / childName を流用していたが、
+  // 2〜8組目と同じ命名（serviceType/servicePeriod/serviceAmount + 連番）に統一した。
+  // 旧構造で保存済みのデータは lib/compat/legacyPage2.ts で読み取り時に移送する。
+  serviceType1?: string;
+  servicePeriod1?: string;
+  serviceAmount1?: string;
+
   serviceType2?: string;
   servicePeriod2?: string;
   serviceAmount2?: string;

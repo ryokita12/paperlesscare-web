@@ -1,9 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { createElement, useState } from "react";
 import type { CertPage } from "../types/cert";
+import type { CertTypeId } from "../constants/certPages";
+import {
+  getCertLayoutId,
+  type CertLayoutId,
+} from "../constants/certLayoutMap";
 
 type Props = {
+  certType: CertTypeId;
   pageIndex: number;
   pageTitle: string;
   page: CertPage;
@@ -15,6 +21,10 @@ type LayoutProps = {
   page: CertPage;
   onChangeField: Props["onChangeField"];
 };
+
+// 受給者証1ページ分の帳票レイアウト。LAYOUT_COMPONENTS に登録し、
+// constants/certLayoutMap.ts の対応表を通じて種別ごとに差し替える。
+export type CertLayout = (props: LayoutProps) => React.ReactElement;
 
 function EditableCertCell({
   value,
@@ -214,21 +224,21 @@ function LayoutType2({ pageTitle, page, onChangeField }: LayoutProps) {
       <div className="grid grid-cols-[140px_1fr] border-b">
         <div className="border-r flex items-center justify-center cert-cell text-center">サービス種別</div>
         <div className="cert-cell text-sm font-medium">
-          <EditableCertCell value={page.formData.name} field="name" onChangeField={onChangeField} />
+          <EditableCertCell value={page.formData.serviceType1 || ""} field="serviceType1" onChangeField={onChangeField} />
         </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b cert-row-sm">
         <div className="border-r flex items-center justify-center cert-cell text-center">支給決定期間</div>
         <div className="cert-cell text-sm font-medium">
-          <EditableCertCell value={page.formData.birthday} field="birthday" onChangeField={onChangeField} />
+          <EditableCertCell value={page.formData.servicePeriod1 || ""} field="servicePeriod1" onChangeField={onChangeField} />
         </div>
       </div>
 
       <div className="grid grid-cols-[140px_1fr] border-b cert-row-sm">
         <div className="border-r flex items-center justify-center cert-cell text-center">支給量等</div>
         <div className="cert-cell text-sm font-medium">
-          <EditableCertCell value={page.formData.childName} field="childName" onChangeField={onChangeField} multiline />
+          <EditableCertCell value={page.formData.serviceAmount1 || ""} field="serviceAmount1" onChangeField={onChangeField} multiline />
         </div>
       </div>
 
@@ -682,84 +692,44 @@ function LayoutType7({ pageTitle, page, onChangeField }: LayoutProps) {
   );
 }
 
+// レイアウトIDから実際のコンポーネントへの対応。
+// 「どの種別のどのページがどのIDを使うか」は constants/certLayoutMap.ts が持つ。
+const LAYOUT_COMPONENTS: Record<CertLayoutId, CertLayout> = {
+  certificate1: LayoutType1,
+  careBenefit1: LayoutType2,
+  careBenefit2: LayoutType3,
+  trainingBenefit: LayoutType4,
+  certificate2: LayoutType5,
+  planSupport: LayoutType6,
+  userBurden: LayoutType7,
+};
+
+/**
+ * 受給者証種別とページ番号から、描画に使うレイアウトコンポーネントを返す。
+ */
+export function getCertLayout(
+  certType: CertTypeId,
+  pageIndex: number
+): CertLayout {
+  return LAYOUT_COMPONENTS[getCertLayoutId(certType, pageIndex)];
+}
+
 export default function CertLayoutRenderer({
+  certType,
   pageIndex,
   pageTitle,
   page,
   onChangeField,
 }: Props) {
-  switch (pageIndex) {
-    case 0:
-      return (
-        <LayoutType1
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 1:
-      return (
-        <LayoutType2
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 2:
-      return (
-        <LayoutType3
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 3:
-      return (
-        <LayoutType4
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 4:
-      return (
-        <LayoutType5
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 5:
-      return (
-        <LayoutType6
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 6:
-      return (
-        <LayoutType7
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    case 7:
-      return (
-        <LayoutType7
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-    default:
-      return (
-        <LayoutType7
-          pageTitle={pageTitle}
-          page={page}
-          onChangeField={onChangeField}
-        />
-      );
-  }
+  // レイアウトはモジュールトップレベルで定義済みのコンポーネントから選ぶだけで、
+  // 描画のたびに新しいコンポーネントを作っているわけではない。
+  // ページ7と8のように同じレイアウトを共有するページ間を移動したとき、
+  // EditableCertCell の編集中state（開いている入力欄と下書き）が
+  // 引き継がれて別ページへ書き込まれるのを防ぐため、keyでページごとに再マウントする。
+  return createElement(getCertLayout(certType, pageIndex), {
+    key: `${certType}-${pageIndex}`,
+    pageTitle,
+    page,
+    onChangeField,
+  });
 }
