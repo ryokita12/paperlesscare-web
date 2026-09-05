@@ -5,6 +5,7 @@ import type { CertPage } from "../types/cert";
 import type { CertTypeId } from "../constants/certPages";
 import {
   getCertLayoutId,
+  hasContactInfoRow,
   type CertLayoutId,
 } from "../constants/certLayoutMap";
 
@@ -529,7 +530,20 @@ function LayoutType5({ pageTitle, page, onChangeField }: LayoutProps) {
   );
 }
 
-function LayoutType6({ pageTitle, page, onChangeField }: LayoutProps) {
+// page6（計画相談支援給付費 / 特定障害者特別給付費）の共通レイアウト。
+//
+// adult と child で構造は同一だが、child の様式にだけ最下部に「問い合わせ先」欄がある。
+// その1行の有無だけを withContactInfo で切り替え、他の行は完全に共有する。
+// withContactInfo=false のとき、adult の従来の描画結果と一致する。
+type PlanSupportLayoutProps = LayoutProps & {
+  withContactInfo: boolean;
+};
+
+function PlanSupportLayout({
+  page,
+  onChangeField,
+  withContactInfo,
+}: PlanSupportLayoutProps) {
   return (
     <div className="min-w-full border cert-table">
       <div className="border-b cert-title">
@@ -598,13 +612,46 @@ function LayoutType6({ pageTitle, page, onChangeField }: LayoutProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-[140px_1fr] cert-row-lg">
+      <div
+        className={`grid grid-cols-[140px_1fr] ${
+          withContactInfo ? "border-b " : ""
+        }cert-row-lg`}
+      >
         <div className="border-r cert-cell text-center">（予備欄）</div>
         <div className="cert-cell text-sm font-medium">
           <EditableCertCell value={page.formData.memo || ""} field="memo" onChangeField={onChangeField} multiline />
         </div>
       </div>
+
+      {withContactInfo && (
+        <div className="grid grid-cols-[140px_1fr]">
+          <div className="border-r flex items-start justify-center cert-cell text-center">問い合わせ先</div>
+          <div className="cert-cell text-sm font-medium">
+            <EditableCertCell value={page.formData.contactInfo || ""} field="contactInfo" onChangeField={onChangeField} multiline />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// adult の page6。従来どおり問い合わせ先なし。
+function LayoutType6(props: LayoutProps) {
+  return (
+    <PlanSupportLayout
+      {...props}
+      withContactInfo={hasContactInfoRow("planSupport")}
+    />
+  );
+}
+
+// child の page6。様式に印字されている「問い合わせ先」を追加で表示する。
+function LayoutType6WithContactInfo(props: LayoutProps) {
+  return (
+    <PlanSupportLayout
+      {...props}
+      withContactInfo={hasContactInfoRow("planSupportWithContact")}
+    />
   );
 }
 
@@ -701,6 +748,7 @@ const LAYOUT_COMPONENTS: Record<CertLayoutId, CertLayout> = {
   trainingBenefit: LayoutType4,
   certificate2: LayoutType5,
   planSupport: LayoutType6,
+  planSupportWithContact: LayoutType6WithContactInfo,
   userBurden: LayoutType7,
 };
 

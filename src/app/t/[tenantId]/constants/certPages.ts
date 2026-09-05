@@ -27,8 +27,8 @@ export const CERT_TYPES = [
     shortLabel: "障害福祉サービス受給者証（18歳未満）",
     colorName: "黄緑色の受給者証",
     themeClass: "cert-type-green",
-    enabled: false,
-    statusLabel: "今後実装予定",
+    enabled: true,
+    statusLabel: "",
   },
 ] as const;
 

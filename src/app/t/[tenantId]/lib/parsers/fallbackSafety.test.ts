@@ -227,9 +227,28 @@ test("registry: pageIndex は0始まり（ページ1が index 0 に対応する�
   assert.notEqual(getCertPageParser("adult", 1), parseAdultPage1);
 });
 
-test("child は無効のまま（enabled = false を維持）", () => {
+// 【仕様変更に伴い更新したテスト】
+// child は選択可能になったが、専用パーサはまだ実装していない。
+// 有効化後こそ「パーサ未実装でも人物フィールドを汚染しない」ことが重要になるため、
+// enabled と parser 未登録の両方をこのテストで固定する。
+test("child は選択可能（enabled = true）だが、専用パーサは未実装のまま", () => {
   const child = CERT_TYPES.find((type) => type.id === "child");
 
   assert.ok(child, "child 種別が定義されていること");
-  assert.equal(child.enabled, false);
+  assert.equal(child.enabled, true);
+
+  // 有効化しても parser registry は変わっていない
+  for (let pageIndex = 0; pageIndex < PAGE_COUNT; pageIndex++) {
+    assert.equal(
+      getCertPageParser("child", pageIndex),
+      null,
+      `child / pageIndex=${pageIndex} に専用パーサが登録されている`
+    );
+  }
+
+  // そのため取込時は安全な空フォームが返り、人物フィールドは埋まらない
+  assertNoPersonData(
+    parseCertText(POLLUTING_TEXT, 0, "child"),
+    "child 有効化後の page1"
+  );
 });

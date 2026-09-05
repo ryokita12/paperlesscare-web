@@ -19,14 +19,23 @@ test("getCertLayoutId: adult の8ページが想定どおりのレイアウト�
   );
 });
 
-test("getCertLayoutId: child は現時点では adult と同じレイアウトを参照する", () => {
+// 【挙動を意図的に変更したテスト】
+// 以前は「child は現時点では adult と同じレイアウトを参照する」ことを固定していたが、
+// 様式画像の比較で page6 に構造差（child のみ問い合わせ先あり）が確認できたため、
+// page6 だけが異なるという新しい仕様へ書き換えている。
+test("getCertLayoutId: child は page6 のみ adult と異なり、他のページは共通", () => {
   for (let pageIndex = 0; pageIndex < PAGE_COUNT; pageIndex++) {
+    if (pageIndex === 5) continue;
+
     assert.equal(
       getCertLayoutId("child", pageIndex),
       getCertLayoutId("adult", pageIndex),
-      `pageIndex=${pageIndex}`
+      `pageIndex=${pageIndex} は adult と共通のはず`
     );
   }
+
+  assert.equal(getCertLayoutId("adult", 5), "planSupport");
+  assert.equal(getCertLayoutId("child", 5), "planSupportWithContact");
 });
 
 test("getCertLayoutId: 定義済みの全種別が全ページ分のレイアウトを解決できる", () => {
