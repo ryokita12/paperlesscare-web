@@ -1,7 +1,5 @@
 import type { FormDataType } from "../../../types/cert";
-
-const getLines = (text: string) =>
-  text.split("\n").map((v) => v.trim()).filter(Boolean);
+import { getLines } from "../common/helpers.ts";
 
 // 「令和7年4月1日から令和8年3月31日まで」形式の支給決定期間
 const PERIOD_RE = /令和\d+年\d+月\d+日から令和\d+年\d+月\d+日まで/;

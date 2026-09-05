@@ -1,36 +1,19 @@
 import type { FormDataType } from "../../../types/cert";
-
-const getLines = (text: string) =>
-  text.split("\n").map((v) => v.trim()).filter(Boolean);
-
-const pickLineAfter = (text: string, label: string) => {
-  const lines = getLines(text);
-  const index = lines.findIndex((line) => line.includes(label));
-  return index >= 0 ? lines[index + 1] || "" : "";
-};
-
-const pickLineBefore = (text: string, label: string) => {
-  const lines = getLines(text);
-  const index = lines.findIndex((line) => line.includes(label));
-  return index > 0 ? lines[index - 1] || "" : "";
-};
+import {
+  ERA_DATE_RE,
+  normalizeEraDate,
+  pickLineAfter,
+  pickLineBefore,
+} from "../common/helpers.ts";
 
 // 「氏名」ラベルはOCRで表記が揺れる（氏名 / 氏 名 / 氏\n名 / 等氏名 等）。
 // "氏" と "名" の間に空白・改行が0文字以上入る形として一括で扱う。
 const NAME_BLOCK_RE = /氏\s*名\s*([^\n]*)/g;
 
-// 和暦日付。桁の前後に空白が入るOCR揺れ（「令和 5 年 6 月 30 日」等）も許容する
-const ERA_DATE_RE = /(昭和|平成|令和)\s*\d+\s*年\s*\d+\s*月\s*\d+\s*日/;
-
 function cleanNameValue(raw: string): string {
   return raw
     .replace(/^(等)?\s*(フリガナ|氏\s*名)\s*/, "")
     .trim();
-}
-
-// 「令和 5 年 6 月 30 日」のような桁間の空白を除去し「令和5年6月30日」に揃える
-function normalizeEraDate(raw: string): string {
-  return raw.replace(/\s+/g, "");
 }
 
 type NameBlock = {

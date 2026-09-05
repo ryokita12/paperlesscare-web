@@ -1,7 +1,5 @@
 import type { FormDataType } from "../../../types/cert";
-
-const getLines = (text: string) =>
-  text.split("\n").map((v) => v.trim()).filter(Boolean);
+import { getLines } from "../common/helpers.ts";
 
 const pickSections = (text: string) => {
   const lines = getLines(text);

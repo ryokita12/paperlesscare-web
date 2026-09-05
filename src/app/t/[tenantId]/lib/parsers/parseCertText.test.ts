@@ -47,7 +47,12 @@ test("parseCertText: adult ページ2はサービス情報を serviceType1 系�
   assert.equal(result.name, "");
 });
 
-test("parseCertText: 専用パーサが無い場合もフォールバックで必須項目を返す", () => {
+// 【挙動を意図的に変更したテスト】
+// 以前は「専用パーサが無い場合もフォールバックで必須項目を返す」ことを固定していたが、
+// その緩い抽出はページの意味を区別せず人物フィールドを埋めてしまうため、
+// 「専用パーサが無ければ空のフォームを返す」挙動へ変更した。
+// テストもその新しい契約に合わせて書き換えている。
+test("parseCertText: 専用パーサが無い場合は空のフォームを返す（推測で埋めない）", () => {
   const result = parseCertText(
     `受給者証番号
 1234567890
@@ -61,11 +66,13 @@ test("parseCertText: 専用パーサが無い場合もフォールバックで�
     "child"
   );
 
-  // child は専用パーサ未実装のため parseFallback を通る。
-  // 例外を投げず、FormDataType の必須項目が揃った状態で返ることを保証する。
-  assert.equal(result.number, "1234567890");
-  assert.equal(result.disabilityType, "3");
-  assert.equal(result.cityName, "架空市");
+  // child は専用パーサ未実装。抽出できそうな値があっても埋めない。
+  assert.equal(result.number, "");
+  assert.equal(result.disabilityType, "");
+  assert.equal(result.cityName, "");
+  assert.equal(result.name, "");
+
+  // 例外を投げず、FormDataType の必須項目が文字列で揃っていることは維持する。
   assert.equal(typeof result.name, "string");
   assert.equal(typeof result.issuerAddress, "string");
 });
