@@ -7,6 +7,9 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 
 import { ImageAnnotatorClient } from "@google-cloud/vision";
+import { initializeApp } from "firebase-admin/app";
+
+initializeApp();
 
 // ===== Gen2 共通設定 =====
 setGlobalOptions({
@@ -111,3 +114,11 @@ export const ocrFromImageData = onCall(async (req) => {
     );
   }
 });
+
+// ===== LINEスタッフ版（LIFF）の認証・管理Webのスタッフ認証キー設定 =====
+export {
+  lineSignIn,
+  lineRegisterStaff,
+  getStaffAuthKeyStatus,
+  updateStaffAuthKey,
+} from "./line/handlers";

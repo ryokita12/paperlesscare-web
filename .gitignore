@@ -45,3 +45,9 @@ next-env.d.ts
 
 # firebase local
 .firebase/
+
+# Functionsのパラメータ（LINE Login チャネルIDなど、秘密情報ではない値のみ）
+!functions/.env
+
+# Firebase emulators
+*-debug.log
