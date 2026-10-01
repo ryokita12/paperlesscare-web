@@ -13,6 +13,12 @@ service cloud.firestore {
     match /tenants/{tenantId}/beneficiaries/{beneficiaryId} {
       allow read, write: if request.auth != null &&
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+
+      // 利用者ごとの受給者証（1利用者 : N件）。親の利用者と同じテナント所属チェック。
+      match /certificates/{certificateId} {
+        allow read, write: if request.auth != null &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+      }
     }
 
     match /{document=**} {

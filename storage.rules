@@ -13,6 +13,11 @@ service firebase.storage {
       allow read, write: if request.auth != null && callerTenantId() == tenantId;
     }
 
+    // 受給者証単位の画像（更新時に以前の受給者証の画像を上書きしないよう、証ごとにフォルダを分ける）
+    match /tenants/{tenantId}/recipients/{recipientId}/certificates/{certificateId}/{fileName} {
+      allow read, write: if request.auth != null && callerTenantId() == tenantId;
+    }
+
     // 本機能追加以前に保存された受給者証画像（uploads/{uid}/...）を
     // 引き続き閲覧できるようにするための読み取り専用ルール。
     // アップロード者のtenantIdと閲覧者のtenantIdが一致すれば読める

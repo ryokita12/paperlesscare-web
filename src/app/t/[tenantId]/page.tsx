@@ -20,8 +20,13 @@ import CertLayoutRenderer from "./components/certLayouts";
 import RecipientImportModeSelect from "./components/RecipientImportModeSelect";
 import { parseCertText } from "./lib/parsers/parseCertText";
 import {
+  addCertificateToBeneficiary,
+  certificatePageStoragePath,
+  createBeneficiaryWithCertificate,
+  getBeneficiary,
   reserveBeneficiaryId,
-  saveBeneficiary,
+  reserveCertificateId,
+  type BeneficiaryRecord,
   type SavedCertPage,
 } from "./lib/firestore/beneficiaries";
 import { compressImageToJpeg } from "./lib/image/compressImage";
@@ -63,6 +68,14 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function isMobileDevice(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    (window.matchMedia?.("(pointer: coarse)")?.matches ||
+      /iPhone|iPad|iPod|Android/i.test(navigator.userAgent))
+  );
+}
+
 function formatError(e: unknown): string {
   const code =
     typeof e === "object" && e !== null && "code" in e ? String((e as { code: unknown }).code) : "";
@@ -84,6 +97,10 @@ type ImportSession = {
   selectedCertType: CertTypeId;
   activePageIndex: number;
   beneficiaryId: string;
+  // 取込中の受給者証ID（Storageの保存先フォルダ・取込画像の一時保存キー）
+  certificateId?: string;
+  // 既存利用者へ受給者証を登録・更新する場合の対象利用者ID。新規利用者の場合は空
+  targetBeneficiaryId?: string;
   pages: PersistedPageData[];
 };
 
@@ -130,20 +147,40 @@ export default function TenantHome() {
   const tenantId = routeParams?.tenantId ?? "";
   const { user, loading } = useRequireAuth();
 
+  // 利用者詳細の「受給者証を更新／登録」から来た場合は ?beneficiaryId=xxx&new=1 が付く。
+  // new=1 は「取込を最初から始める」合図で、前回の取込セッションは復元しない。
+  // （スマホ撮影からの復路では new は付かないため、取込中の状態が復元される）
+  const urlTargetBeneficiaryId = searchParams.get("beneficiaryId") || "";
+  const startFresh = searchParams.get("new") === "1";
+
   // スマホ撮影からの復路など、同一tenantIdでの再マウント時に
   // sessionStorageから取込中の状態を1回だけ読み込む
-  const restoredSession = useMemo(() => readImportSession(tenantId), [tenantId]);
+  const [restoredSession] = useState<ImportSession | null>(() => {
+    if (startFresh) return null;
+    const session = readImportSession(tenantId);
+    if (!session) return null;
+    // URLで指定された対象利用者と、保存されていた取込の対象が違う場合は復元しない
+    if (urlTargetBeneficiaryId && session.targetBeneficiaryId !== urlTargetBeneficiaryId) {
+      return null;
+    }
+    return session;
+  });
 
   const pageQueryParam = searchParams.get("page");
   const initialPage = pageQueryParam
     ? clamp(Number(pageQueryParam) - 1, 0, PAGE_COUNT - 1)
     : clamp(restoredSession?.activePageIndex ?? 0, 0, PAGE_COUNT - 1);
 
-  const [flowStep, setFlowStep] = useState<"selectMode" | "import">(
-    () => restoredSession?.flowStep ?? "selectMode"
+  const [targetBeneficiaryId, setTargetBeneficiaryId] = useState<string>(
+    () => urlTargetBeneficiaryId || restoredSession?.targetBeneficiaryId || ""
   );
-  const [importMode, setImportMode] = useState<"new" | "update" | null>(
-    () => restoredSession?.importMode ?? null
+  const [targetBeneficiary, setTargetBeneficiary] = useState<BeneficiaryRecord | null>(null);
+
+  const [flowStep, setFlowStep] = useState<"selectMode" | "import">(() =>
+    urlTargetBeneficiaryId ? "import" : restoredSession?.flowStep ?? "selectMode"
+  );
+  const [importMode, setImportMode] = useState<"new" | "update" | null>(() =>
+    urlTargetBeneficiaryId ? "update" : restoredSession?.importMode ?? null
   );
 
   const [busy, setBusy] = useState(false);
@@ -154,12 +191,21 @@ export default function TenantHome() {
   const [selectedCertType, setSelectedCertType] = useState<CertTypeId>(
     () => restoredSession?.selectedCertType ?? "adult"
   );
-  // 受給者ドキュメントIDを取込開始時点で事前採番しておく。ページ画像は最初から
-  // このIDに紐づくStorageパス（tenants/{tenantId}/recipients/{beneficiaryId}/pageN.jpg）へ
+  // 保存先の利用者ID。既存利用者への登録・更新ではその利用者のID、
+  // 新規利用者の場合は取込開始時点で事前採番したIDを使う。
+  // 受給者証IDも事前採番し、ページ画像は最初から
+  // tenants/{tenantId}/recipients/{beneficiaryId}/certificates/{certificateId}/pageN.jpg へ
   // アップロードするため、保存後に画像を移動させる必要がなく、保存の再試行も安全になる。
   const [beneficiaryId, setBeneficiaryId] = useState<string>(
-    () => restoredSession?.beneficiaryId || (tenantId ? reserveBeneficiaryId(tenantId) : "")
+    () =>
+      urlTargetBeneficiaryId ||
+      restoredSession?.beneficiaryId ||
+      (tenantId ? reserveBeneficiaryId(tenantId) : "")
   );
+  const [certificateId, setCertificateId] = useState<string>(
+    () => restoredSession?.certificateId || (tenantId ? reserveCertificateId(tenantId) : "")
+  );
+  const [mobile, setMobile] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const [pages, setPages] = useState<CertPage[]>(() => {
     const base = Array.from({ length: PAGE_COUNT }, () => createEmptyPage());
@@ -226,6 +272,53 @@ export default function TenantHome() {
     setBeneficiaryId(reserveBeneficiaryId(tenantId));
   }, [tenantId, beneficiaryId]);
 
+  useEffect(() => {
+    if (!tenantId || certificateId) return;
+    setCertificateId(reserveCertificateId(tenantId));
+  }, [tenantId, certificateId]);
+
+  // 端末判定はwindowが必要なため、ハイドレーション後に行う
+  useEffect(() => {
+    setMobile(isMobileDevice());
+  }, []);
+
+  // 「受給者証を更新／登録」から来た場合（new=1）は前回の取込の残りを消し、
+  // URLから new を外す（以後の再読み込み・撮影往復で取込中の状態を復元できるように）。
+  useEffect(() => {
+    if (!startFresh || !tenantId) return;
+    clearImportSession(tenantId);
+    void clearPageImages(tenantId);
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("new");
+    const qs = params.toString();
+    router.replace(qs ? `/t/${tenantId}?${qs}` : `/t/${tenantId}`);
+    // 初回マウント時のみ実行する
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 既存利用者への登録・更新時は、対象利用者を画面に表示する
+  useEffect(() => {
+    if (!user || !tenantId || !targetBeneficiaryId) return;
+
+    let cancelled = false;
+    getBeneficiary(tenantId, targetBeneficiaryId)
+      .then((record) => {
+        if (cancelled || !record) return;
+        setTargetBeneficiary(record);
+        // 取込を新しく始めた場合は、現在の受給者証と同じ種別を初期選択にする
+        const sameType = CERT_TYPES.find((t) => t.id === record.certType);
+        if (!restoredSession && sameType?.enabled) setSelectedCertType(sameType.id);
+      })
+      .catch(() => {
+        // 表示用の取得に失敗しても取込自体は続行できる（保存時に存在を再確認する）
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, tenantId, targetBeneficiaryId, restoredSession]);
+
   // 取込中の状態（flowStep/importMode/selectedCertType/activePageIndex/beneficiaryId/
   // 各ページのformData・ocrText・storagePath）をtenantId単位でsessionStorageへ自動保存する。
   // マウント直後（＝復元直後）の1回目は書き込みをスキップし、
@@ -244,13 +337,25 @@ export default function TenantHome() {
       selectedCertType,
       activePageIndex,
       beneficiaryId,
+      certificateId,
+      targetBeneficiaryId,
       pages: pages.map((page) => ({
         formData: page.formData,
         ocrText: page.ocrText,
         storagePath: page.storagePath,
       })),
     });
-  }, [tenantId, flowStep, importMode, selectedCertType, activePageIndex, beneficiaryId, pages]);
+  }, [
+    tenantId,
+    flowStep,
+    importMode,
+    selectedCertType,
+    activePageIndex,
+    beneficiaryId,
+    certificateId,
+    targetBeneficiaryId,
+    pages,
+  ]);
 
   useEffect(() => {
     if (loading || !user) return;
@@ -280,12 +385,14 @@ export default function TenantHome() {
   // ここで埋めるのは「まだ画像を持っていないページ」だけにして、
   // 撮影直後の復路でそのページに設定済みの新しい画像を上書きしないようにする。
   useEffect(() => {
-    if (loading || !user || !tenantId || !beneficiaryId) return;
+    if (loading || !user || !tenantId || !certificateId) return;
 
     let cancelled = false;
 
     (async () => {
-      const restored = await loadPageImages(tenantId, beneficiaryId);
+      // 一時保存のキーは受給者証ID（同じ利用者への取込をやり直した場合に、
+      // 中断した前回の画像が混ざらないようにする）
+      const restored = await loadPageImages(tenantId, certificateId);
       if (cancelled || restored.length === 0) return;
 
       const targets = restored.filter(
@@ -322,7 +429,7 @@ export default function TenantHome() {
     return () => {
       cancelled = true;
     };
-  }, [tenantId, beneficiaryId, loading, user]);
+  }, [tenantId, certificateId, loading, user]);
 
   useEffect(() => {
     return () => {
@@ -343,26 +450,26 @@ export default function TenantHome() {
     setStatus("");
     if (fileInputRef.current) fileInputRef.current.value = "";
 
-    void deletePageImage({ tenantId, beneficiaryId, pageIndex: activePageIndex });
+    void deletePageImage({ tenantId, beneficiaryId: certificateId, pageIndex: activePageIndex });
   };
 
-  const onPickClick = () => {
+  // スマホ：ガイド枠付きの撮影画面へ遷移する。
+  // 戻り先に対象利用者IDを含め、撮影往復後も「既存利用者への登録」のままにする。
+  const onCaptureClick = () => {
     if (busy) return;
 
-    const isMobile =
-      typeof window !== "undefined" &&
-      (window.matchMedia?.("(pointer: coarse)")?.matches ||
-        /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+    const backParams = new URLSearchParams({ page: String(activePageIndex + 1) });
+    if (targetBeneficiaryId) backParams.set("beneficiaryId", targetBeneficiaryId);
 
-    if (isMobile) {
-      router.push(
-        `/t/${tenantId}/capture?next=${encodeURIComponent(
-          `/t/${tenantId}?page=${activePageIndex + 1}`
-        )}`
-      );
-      return;
-    }
+    router.push(
+      `/t/${tenantId}/capture?next=${encodeURIComponent(`/t/${tenantId}?${backParams}`)}`
+    );
+  };
 
+  // ファイル選択。スマホでは端末標準のカメラ／写真選択が開くため、
+  // LINE内ブラウザ等で撮影画面のカメラが起動しない場合の代替手段にもなる。
+  const onPickClick = () => {
+    if (busy) return;
     fileInputRef.current?.click();
   };
 
@@ -403,7 +510,7 @@ export default function TenantHome() {
     // 選択した時点でIndexedDBへ退避しておく（Firebaseへのアップロードは確定保存時のまま）。
     void savePageImage({
       tenantId,
-      beneficiaryId,
+      beneficiaryId: certificateId,
       pageIndex: activePageIndex,
       file: finalFile,
     });
@@ -503,10 +610,12 @@ export default function TenantHome() {
       return;
     }
 
-    if (!beneficiaryId) {
+    if (!beneficiaryId || !certificateId) {
       setSaveMessage("⚠️ 受給者IDの準備ができていません。少し待ってから再度お試しください。");
       return;
     }
+
+    const isExistingBeneficiary = !!targetBeneficiaryId;
 
     setSaving(true);
     setSaveMessage("画像をアップロード中...");
@@ -524,7 +633,12 @@ export default function TenantHome() {
 
         // このページに画像がある場合のみ、確定保存のこのタイミングで初めてアップロードする
         if (page.selectedFile) {
-          pageStoragePath = `tenants/${tenantId}/recipients/${beneficiaryId}/page${pageNo}.jpg`;
+          pageStoragePath = certificatePageStoragePath({
+            tenantId,
+            beneficiaryId,
+            certificateId,
+            pageNo,
+          });
           await uploadBytes(ref(storage, pageStoragePath), page.selectedFile, {
             contentType: "image/jpeg",
           });
@@ -542,22 +656,40 @@ export default function TenantHome() {
 
       setSaveMessage("受給者データを保存中...");
 
-      const id = await saveBeneficiary({
+      const saveParams = {
         tenantId,
         beneficiaryId,
+        certificateId,
         certType: selectedCertType,
         pages: savedPages,
+        source: isMobileDevice() ? ("mobile" as const) : ("web" as const),
         user,
-      });
+      };
 
-      setSaveMessage(`✅ 保存しました（ID: ${id}）。「受給者管理」画面から確認できます。`);
+      if (isExistingBeneficiary) {
+        // 既存利用者：新しい受給者証を追加し、現在の証を切り替える（旧証は履歴として残る）
+        await addCertificateToBeneficiary(saveParams);
+      } else {
+        // 新規利用者：利用者＋受給者証を作成する
+        await createBeneficiaryWithCertificate(saveParams);
+      }
+
+      const savedBeneficiaryId = beneficiaryId;
+
+      setSaveMessage("✅ 保存しました。利用者詳細を表示します...");
       setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
       setActivePageIndex(0);
       setStatus("");
       setFlowStep("selectMode");
       setImportMode(null);
+      setTargetBeneficiaryId("");
+      setTargetBeneficiary(null);
+      setBeneficiaryId(reserveBeneficiaryId(tenantId));
+      setCertificateId(reserveCertificateId(tenantId));
       clearImportSession(tenantId);
       void clearPageImages(tenantId);
+
+      router.push(`/t/${tenantId}/beneficiaries/${savedBeneficiaryId}`);
     } catch (e: unknown) {
       // アップロード失敗時・Firestore保存失敗時のいずれも、今回アップロード済みの
       // 画像は孤立させず可能な範囲で削除する。入力内容・OCR結果（pages）はそのまま
@@ -610,12 +742,17 @@ export default function TenantHome() {
               clearImportSession(tenantId);
               void clearPageImages(tenantId);
               setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
+              setTargetBeneficiaryId("");
+              setTargetBeneficiary(null);
               setBeneficiaryId(reserveBeneficiaryId(tenantId));
+              setCertificateId(reserveCertificateId(tenantId));
               setFlowStep("import");
               return;
             }
 
-            alert("既存受給者検索は次のステップで追加します");
+            // 既存利用者の更新は、受給者管理で利用者を選び、
+            // 利用者詳細の「受給者証を更新」から行う
+            router.push(`/t/${tenantId}/beneficiaries`);
           }}
         />
       </div>
@@ -626,6 +763,37 @@ export default function TenantHome() {
     <div className="space-y-6 overflow-x-hidden">
       <div className="mb-3 text-xl font-bold">受給者証取込＆送信</div>
       <div className="w-full max-w-[1280px] mx-auto space-y-4">
+        {targetBeneficiaryId && (
+          <section className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs text-indigo-700">
+                  {targetBeneficiary?.currentCertificateId || targetBeneficiary?.hasLegacyCertificate
+                    ? "既存利用者の受給者証を更新します（以前の受給者証は履歴として残ります）"
+                    : "既存利用者に受給者証を登録します"}
+                </div>
+                <div className="mt-1 text-base font-bold break-words">
+                  {targetBeneficiary
+                    ? `${targetBeneficiary.profile.name || targetBeneficiary.summary.name || "氏名未登録"} 様`
+                    : "利用者情報を読み込み中..."}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  clearImportSession(tenantId);
+                  void clearPageImages(tenantId);
+                  router.push(`/t/${tenantId}/beneficiaries/${targetBeneficiaryId}`);
+                }}
+                disabled={saving}
+                className="rounded-xl border bg-white px-4 py-2 text-sm disabled:opacity-50"
+              >
+                中止して利用者詳細へ戻る
+              </button>
+            </div>
+          </section>
+        )}
+
         <section className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="mb-3 text-sm font-semibold">
             ①受給者証の種類を選択してください
@@ -740,7 +908,6 @@ export default function TenantHome() {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
-                capture="environment"
                 disabled={busy || compressing}
                 className="hidden"
                 onChange={(e) => onFileSelected(e.target.files?.[0] ?? null)}
@@ -754,13 +921,28 @@ export default function TenantHome() {
                 aria-label="画像貼り付けエリア"
               >
                 <div className="flex flex-wrap items-center gap-2">
+                  {mobile && (
+                    <button
+                      type="button"
+                      onClick={onCaptureClick}
+                      disabled={busy || compressing}
+                      className="rounded-xl bg-black text-white px-4 py-2 text-sm disabled:opacity-50"
+                    >
+                      カメラで撮影
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={onPickClick}
                     disabled={busy || compressing}
-                    className="rounded-xl bg-black text-white px-4 py-2 text-sm disabled:opacity-50"
+                    className={
+                      mobile
+                        ? "rounded-xl border px-4 py-2 text-sm hover:bg-white transition disabled:opacity-50"
+                        : "rounded-xl bg-black text-white px-4 py-2 text-sm disabled:opacity-50"
+                    }
                   >
-                    ファイルを選択
+                    {mobile ? "写真を選択" : "ファイルを選択"}
                   </button>
 
                   <button

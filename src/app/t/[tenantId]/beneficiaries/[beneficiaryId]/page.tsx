@@ -1,15 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useRequireAuth } from "@/lib/auth";
 import {
   getBeneficiary,
+  listCertificates,
   updateBeneficiary,
+  updateCertificatePages,
   type BeneficiaryRecord,
+  type CertificateRecord,
   type SavedCertPage,
 } from "../../lib/firestore/beneficiaries";
 import {
+  CERT_TYPES,
   PAGE_COUNT,
   getPageDefinitions,
   getPageTitle,
@@ -41,7 +45,26 @@ function padPages(
   });
 }
 
-export default function BeneficiaryEditPage() {
+function certTypeLabel(certType: string | null) {
+  if (!certType) return "";
+  return CERT_TYPES.find((t) => t.id === certType)?.colorName || certType;
+}
+
+function formatTimestamp(ts: CertificateRecord["createdAt"]) {
+  if (!ts) return "";
+  try {
+    return ts.toDate().toLocaleDateString("ja-JP");
+  } catch {
+    return "";
+  }
+}
+
+function formatPeriod(cert: CertificateRecord) {
+  if (!cert.validFrom && !cert.validTo) return "";
+  return `${cert.validFrom ?? "?"} 〜 ${cert.validTo ?? "?"}`;
+}
+
+export default function BeneficiaryDetailPage() {
   const params = useParams<{ tenantId: string; beneficiaryId: string }>();
   const tenantId = params?.tenantId ?? "";
   const beneficiaryId = params?.beneficiaryId ?? "";
@@ -49,6 +72,8 @@ export default function BeneficiaryEditPage() {
   const { user, loading } = useRequireAuth();
 
   const [record, setRecord] = useState<BeneficiaryRecord | null>(null);
+  const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
+  const [selectedCertificateId, setSelectedCertificateId] = useState("");
   const [editedPages, setEditedPages] = useState<SavedCertPage[] | null>(null);
   const [loadingRecord, setLoadingRecord] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -57,6 +82,30 @@ export default function BeneficiaryEditPage() {
   const [savingState, setSavingState] = useState<"idle" | "saving">("idle");
   const [saveMessage, setSaveMessage] = useState("");
 
+  const selectCertificate = useCallback((cert: CertificateRecord | undefined) => {
+    setSelectedCertificateId(cert?.id ?? "");
+    setEditedPages(cert ? padPages(cert.pages, cert.certType) : null);
+    setActivePageIndex(0);
+    setDirty(false);
+  }, []);
+
+  // 利用者と受給者証一覧を読み込み、選択中の証（既定は現在の証）を表示する
+  const load = useCallback(
+    async (preferCertificateId?: string) => {
+      const rec = await getBeneficiary(tenantId, beneficiaryId);
+      if (!rec) {
+        setLoadError("受給者データが見つかりませんでした。");
+        return;
+      }
+
+      const certs = await listCertificates(tenantId, rec);
+      setRecord(rec);
+      setCertificates(certs);
+      selectCertificate(certs.find((c) => c.id === preferCertificateId) ?? certs[0]);
+    },
+    [tenantId, beneficiaryId, selectCertificate]
+  );
+
   useEffect(() => {
     if (loading || !user || !tenantId || !beneficiaryId) return;
 
@@ -64,18 +113,7 @@ export default function BeneficiaryEditPage() {
     setLoadingRecord(true);
     setLoadError("");
 
-    getBeneficiary(tenantId, beneficiaryId)
-      .then((rec) => {
-        if (cancelled) return;
-
-        if (!rec) {
-          setLoadError("受給者データが見つかりませんでした。");
-          return;
-        }
-
-        setRecord(rec);
-        setEditedPages(padPages(rec.pages, rec.certType));
-      })
+    load()
       .catch((e: unknown) => {
         if (!cancelled) {
           setLoadError(e instanceof Error ? e.message : "受給者データの取得に失敗しました");
@@ -88,7 +126,13 @@ export default function BeneficiaryEditPage() {
     return () => {
       cancelled = true;
     };
-  }, [loading, user, tenantId, beneficiaryId]);
+  }, [loading, user, tenantId, beneficiaryId, load]);
+
+  const selectedCertificate = certificates.find((c) => c.id === selectedCertificateId);
+  const currentCertificates = certificates.filter((c) => c.status === "current");
+  const pastCertificates = certificates.filter((c) => c.status !== "current");
+  // 過去の受給者証は履歴として閲覧のみ（内容を書き換えない）
+  const readOnly = !!selectedCertificate && selectedCertificate.status !== "current";
 
   const hasAnyImage = useMemo(
     () => !!editedPages?.some((p) => !!p.storagePath),
@@ -96,6 +140,7 @@ export default function BeneficiaryEditPage() {
   );
 
   const updateField = (field: keyof FormDataType, value: string) => {
+    if (readOnly) return;
     setEditedPages((prev) => {
       if (!prev) return prev;
       return prev.map((page, index) =>
@@ -108,30 +153,47 @@ export default function BeneficiaryEditPage() {
     setSaveMessage("");
   };
 
-  const handleCancel = () => {
-    if (dirty) {
-      const ok = window.confirm("編集内容を破棄しますか？");
-      if (!ok) return;
-    }
+  const confirmDiscard = () => !dirty || window.confirm("編集内容を破棄しますか？");
+
+  const handleBack = () => {
+    if (!confirmDiscard()) return;
     router.push(`/t/${tenantId}/beneficiaries`);
+  };
+
+  const handleSelectCertificate = (cert: CertificateRecord) => {
+    if (cert.id === selectedCertificateId || !confirmDiscard()) return;
+    selectCertificate(cert);
+    setSaveMessage("");
+  };
+
+  // 受給者証の取込画面へ、この利用者を対象として遷移する
+  const handleRegisterCertificate = () => {
+    if (!confirmDiscard()) return;
+    router.push(`/t/${tenantId}?beneficiaryId=${encodeURIComponent(beneficiaryId)}&new=1`);
   };
 
   const handleSave = async () => {
     // saving中の連打・二重送信を防止
-    if (!user || savingState === "saving" || !editedPages) return;
+    if (!user || savingState === "saving" || !editedPages || !selectedCertificate || readOnly) return;
 
     setSavingState("saving");
     setSaveMessage("保存中...");
 
     try {
-      await updateBeneficiary({ tenantId, beneficiaryId, pages: editedPages, user });
-
-      const refreshed = await getBeneficiary(tenantId, beneficiaryId);
-      if (refreshed) {
-        setRecord(refreshed);
-        setEditedPages(padPages(refreshed.pages, refreshed.certType));
+      if (selectedCertificate.isLegacyVirtual) {
+        // 受給者証サブコレクション導入前の旧データは、従来どおり利用者docを更新する
+        await updateBeneficiary({ tenantId, beneficiaryId, pages: editedPages, user });
+      } else {
+        await updateCertificatePages({
+          tenantId,
+          beneficiaryId,
+          certificateId: selectedCertificate.id,
+          pages: editedPages,
+          user,
+        });
       }
 
+      await load(selectedCertificate.id);
       setDirty(false);
       setSaveMessage("✅ 保存しました。");
     } catch (e: unknown) {
@@ -173,7 +235,7 @@ export default function BeneficiaryEditPage() {
     );
   }
 
-  if (loadError || !record || !editedPages) {
+  if (loadError || !record) {
     return (
       <div className="space-y-4">
         <div className="rounded-2xl border bg-white p-5 text-sm">
@@ -190,96 +252,194 @@ export default function BeneficiaryEditPage() {
     );
   }
 
-  const currentPage = editedPages[activePageIndex];
-  // Firestoreに保存済みの受給者証種別に従って帳票を描画する
-  // （旧データで certType が欠けている場合は読み取り時に "adult" へ補完済み）。
-  const certType = record.certType;
-  const currentPageTitle = getPageTitle(certType, activePageIndex);
+  const hasCertificate = certificates.length > 0;
+  const displayName = record.profile.name || record.summary.name || "氏名未登録";
+
+  const renderCertificateButton = (cert: CertificateRecord) => {
+    const active = cert.id === selectedCertificateId;
+    const isCurrent = cert.status === "current";
+    const period = formatPeriod(cert);
+
+    return (
+      <button
+        key={cert.id}
+        type="button"
+        onClick={() => handleSelectCertificate(cert)}
+        className={`w-full rounded-xl border px-3 py-2 text-left text-xs transition ${
+          active ? "border-black bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50"
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+              isCurrent ? "bg-emerald-500 text-white" : "bg-zinc-200 text-zinc-700"
+            }`}
+          >
+            {isCurrent ? "現在" : "過去"}
+          </span>
+          <span className="font-semibold">{certTypeLabel(cert.certType)}</span>
+        </div>
+        <div className={`mt-1 ${active ? "opacity-80" : "text-zinc-500"}`}>
+          {cert.issueDate && <>交付：{cert.issueDate}　</>}
+          {period && <>期間：{period}　</>}
+          {formatTimestamp(cert.createdAt) && <>登録：{formatTimestamp(cert.createdAt)}</>}
+        </div>
+      </button>
+    );
+  };
 
   return (
     <div className="space-y-6 overflow-x-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-xl font-bold">受給者情報の編集</div>
-          <div className="mt-1 text-xs opacity-70">
-            {record.summary.name || "未登録"}（{record.summary.number || "受給者番号未取得"}）
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xl font-bold break-words">{displayName}</div>
+          <div className="mt-1 text-xs opacity-70 break-words">
+            {[
+              record.profile.furigana || record.summary.furigana,
+              (record.profile.birthday || record.summary.birthday) &&
+                `生年月日 ${record.profile.birthday || record.summary.birthday}`,
+              record.summary.number && `受給者番号 ${record.summary.number}`,
+            ]
+              .filter(Boolean)
+              .join("　") || "受給者番号未取得"}
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleCancel}
-          className="rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50"
-        >
-          受給者一覧に戻る
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="rounded-xl border px-4 py-2 text-sm hover:bg-zinc-50"
+          >
+            受給者一覧に戻る
+          </button>
+          <button
+            type="button"
+            onClick={handleRegisterCertificate}
+            className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white"
+          >
+            {hasCertificate ? "受給者証を更新" : "受給者証を登録"}
+          </button>
+        </div>
       </div>
 
-      {!hasAnyImage && (
-        <div className="rounded-2xl border bg-amber-50 p-4 text-sm text-amber-800">
-          この受給者の取り込み画像は保存されていません
-        </div>
+      {!hasCertificate && (
+        <section className="rounded-2xl border bg-amber-50 p-5 text-sm text-amber-900">
+          <div className="font-semibold">受給者証がまだ登録されていません</div>
+          <div className="mt-1 text-xs">
+            「受給者証を登録」から受給者証を撮影・取り込むと、この利用者に紐付けて保存されます。
+          </div>
+          <button
+            type="button"
+            onClick={handleRegisterCertificate}
+            className="mt-3 rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white"
+          >
+            受給者証を登録
+          </button>
+        </section>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <section className="rounded-2xl border bg-white p-4 shadow-sm md:sticky md:top-4 md:self-start">
-          <div className="mb-3 text-sm font-semibold">取り込み画像</div>
-          <EditPageSwitcher
-            certType={certType}
-            pages={editedPages}
-            activePageIndex={activePageIndex}
-            onChangePage={setActivePageIndex}
-          />
-          <CertImageViewer storagePath={currentPage.storagePath} />
-        </section>
-
+      {hasCertificate && (
         <section className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="mb-3 rounded-xl bg-zinc-50 px-3 py-2">
-            <div className="text-xs opacity-60">現在のページ</div>
-            <div className="text-sm font-semibold break-words">
-              {activePageIndex + 1}/{PAGE_COUNT}：{currentPageTitle}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <div className="mb-2 text-sm font-semibold">現在の受給者証</div>
+              <div className="space-y-2">
+                {currentCertificates.length > 0 ? (
+                  currentCertificates.map(renderCertificateButton)
+                ) : (
+                  <div className="text-xs text-zinc-500">現在の受給者証はありません</div>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 text-sm font-semibold">
+                過去の受給者証（{pastCertificates.length}件）
+              </div>
+              <div className="space-y-2">
+                {pastCertificates.length > 0 ? (
+                  pastCertificates.map(renderCertificateButton)
+                ) : (
+                  <div className="text-xs text-zinc-500">過去の受給者証はありません</div>
+                )}
+              </div>
             </div>
           </div>
-
-          <div className="w-full max-w-full overflow-x-auto">
-            <CertLayoutRenderer
-              certType={certType}
-              pageIndex={activePageIndex}
-              pageTitle={currentPageTitle}
-              page={{
-                selectedFile: null,
-                previewUrl: "",
-                ocrText: currentPage.ocrText,
-                formData: currentPage.formData,
-                storagePath: currentPage.storagePath,
-              }}
-              onChangeField={updateField}
-            />
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={handleCancel}
-              disabled={savingState === "saving"}
-              className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
-            >
-              キャンセル
-            </button>
-
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={savingState === "saving"}
-              className="rounded-xl bg-black text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
-            >
-              {savingState === "saving" ? "保存中..." : "保存する"}
-            </button>
-          </div>
-
-          {saveMessage && <div className="mt-3 text-sm">{saveMessage}</div>}
         </section>
-      </div>
+      )}
+
+      {selectedCertificate && editedPages && (
+        <>
+          {readOnly && (
+            <div className="rounded-2xl border bg-zinc-100 p-4 text-sm text-zinc-700">
+              過去の受給者証を表示しています（履歴のため閲覧のみ）
+            </div>
+          )}
+
+          {!hasAnyImage && (
+            <div className="rounded-2xl border bg-amber-50 p-4 text-sm text-amber-800">
+              この受給者証の取り込み画像は保存されていません
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <section className="rounded-2xl border bg-white p-4 shadow-sm md:sticky md:top-4 md:self-start">
+              <div className="mb-3 text-sm font-semibold">取り込み画像</div>
+              <EditPageSwitcher
+                certType={selectedCertificate.certType}
+                pages={editedPages}
+                activePageIndex={activePageIndex}
+                onChangePage={setActivePageIndex}
+              />
+              <CertImageViewer storagePath={editedPages[activePageIndex].storagePath} />
+            </section>
+
+            <section className="rounded-2xl border bg-white p-4 shadow-sm">
+              <div className="mb-3 rounded-xl bg-zinc-50 px-3 py-2">
+                <div className="text-xs opacity-60">
+                  {readOnly ? "過去の受給者証" : "現在の受給者証"}：{certTypeLabel(selectedCertificate.certType)}
+                </div>
+                <div className="text-sm font-semibold break-words">
+                  {activePageIndex + 1}/{PAGE_COUNT}：
+                  {getPageTitle(selectedCertificate.certType, activePageIndex)}
+                </div>
+              </div>
+
+              {/* 過去の受給者証は fieldset ごと無効化し、編集ボタンを押せないようにする */}
+              <fieldset disabled={readOnly} className="w-full max-w-full min-w-0 overflow-x-auto">
+                <CertLayoutRenderer
+                  certType={selectedCertificate.certType}
+                  pageIndex={activePageIndex}
+                  pageTitle={getPageTitle(selectedCertificate.certType, activePageIndex)}
+                  page={{
+                    selectedFile: null,
+                    previewUrl: "",
+                    ocrText: editedPages[activePageIndex].ocrText,
+                    formData: editedPages[activePageIndex].formData,
+                    storagePath: editedPages[activePageIndex].storagePath,
+                  }}
+                  onChangeField={updateField}
+                />
+              </fieldset>
+
+              {!readOnly && (
+                <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={savingState === "saving" || !dirty}
+                    className="rounded-xl bg-black text-white px-5 py-3 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {savingState === "saving" ? "保存中..." : "修正内容を保存"}
+                  </button>
+                </div>
+              )}
+
+              {saveMessage && <div className="mt-3 text-sm">{saveMessage}</div>}
+            </section>
+          </div>
+        </>
+      )}
     </div>
   );
 }

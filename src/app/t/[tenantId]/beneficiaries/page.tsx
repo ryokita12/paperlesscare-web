@@ -4,10 +4,15 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import styles from "./page.module.css";
 import { useRequireAuth } from "@/lib/auth";
-import { listBeneficiaries, type BeneficiaryRecord } from "../lib/firestore/beneficiaries";
+import {
+  createBeneficiaryWithoutCertificate,
+  listBeneficiaries,
+  type BeneficiaryRecord,
+} from "../lib/firestore/beneficiaries";
 import { CERT_TYPES } from "../constants/certPages";
 
-function certTypeLabel(certType: string) {
+function certTypeLabel(certType: string | null) {
+  if (!certType) return "受給者証未登録";
   return CERT_TYPES.find((t) => t.id === certType)?.colorName || certType;
 }
 
@@ -30,6 +35,36 @@ export default function BeneficiariesPage() {
   const [beneficiaries, setBeneficiaries] = useState<BeneficiaryRecord[]>([]);
   const [fetching, setFetching] = useState(true);
   const [error, setError] = useState("");
+
+  // 管理Webから受給者証なしで利用者（枠）だけを作成するフォーム
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newFurigana, setNewFurigana] = useState("");
+  const [newBirthday, setNewBirthday] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+
+  const handleCreate = async () => {
+    if (!user || creating || !newName.trim()) return;
+
+    setCreating(true);
+    setCreateError("");
+    try {
+      const id = await createBeneficiaryWithoutCertificate({
+        tenantId,
+        profile: {
+          name: newName.trim(),
+          furigana: newFurigana.trim(),
+          birthday: newBirthday.trim(),
+        },
+        user,
+      });
+      router.push(`/t/${tenantId}/beneficiaries/${id}`);
+    } catch (e: unknown) {
+      setCreateError(e instanceof Error ? e.message : "利用者の作成に失敗しました");
+      setCreating(false);
+    }
+  };
 
   useEffect(() => {
     if (!user || !tenantId) return;
@@ -72,12 +107,80 @@ export default function BeneficiariesPage() {
           </p>
         </div>
 
-        <button className={styles.primaryButton} type="button">
+        <button
+          className={styles.primaryButton}
+          type="button"
+          onClick={() => setShowCreateForm((v) => !v)}
+        >
           ＋ 受給者を新規登録
         </button>
       </div>
 
-      <div className={styles.searchCard}>
+      {showCreateForm && (
+        <div className={styles.searchCard}>
+          <div className={styles.cardTitle}>受給者を新規登録（受給者証なし）</div>
+          <p className={styles.desc}>
+            氏名などの基本情報だけで利用者を作成します。受給者証は作成後の詳細画面から登録できます。
+          </p>
+
+          <div className={styles.searchGrid}>
+            <div className={styles.field}>
+              <label className={styles.label}>氏名（必須）</label>
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="山田 太郎"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>フリガナ</label>
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="ヤマダ タロウ"
+                value={newFurigana}
+                onChange={(e) => setNewFurigana(e.target.value)}
+              />
+            </div>
+            <div className={styles.field}>
+              <label className={styles.label}>生年月日</label>
+              <input
+                className={styles.input}
+                type="text"
+                placeholder="平成20年4月1日"
+                value={newBirthday}
+                onChange={(e) => setNewBirthday(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {createError && <div className="mt-3 text-sm text-red-600">⚠️ {createError}</div>}
+
+          <div className={styles.searchActions}>
+            <button
+              className={styles.secondaryButton}
+              type="button"
+              onClick={() => setShowCreateForm(false)}
+              disabled={creating}
+            >
+              キャンセル
+            </button>
+            <button
+              className={styles.primaryButton}
+              type="button"
+              onClick={handleCreate}
+              disabled={creating || !newName.trim()}
+            >
+              {creating ? "作成中..." : "作成する"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 検索は未実装のため、スマホ幅では一覧が画面外に押し出されないよう非表示にする */}
+      <div className={`${styles.searchCard} ${styles.hideOnMobile}`}>
         <div className={styles.cardTitle}>検索条件</div>
 
         <div className={styles.searchGrid}>
@@ -149,11 +252,13 @@ export default function BeneficiariesPage() {
 									className={styles.tableRow}
 									onClick={() => router.push(`/t/${tenantId}/beneficiaries/${item.id}`)}
 								>
-									<td className={styles.alignLeft}>{item.summary.name || "未登録"}</td>
+									<td className={styles.alignLeft}>{item.profile.name || item.summary.name || "未登録"}</td>
 									<td className={styles.alignCenter}>{item.summary.number || "未取得"}</td>
 									<td className={styles.alignCenter}>{item.summary.birthday || "未取得"}</td>
 									<td className={styles.alignLeft}>
-                    <span className={styles.badgeActive}>{certTypeLabel(item.certType)}</span>
+                    <span className={item.certType ? styles.badgeActive : styles.badgeInactive}>
+                      {certTypeLabel(item.certType)}
+                    </span>
                   </td>
                   <td className={styles.alignCenter}>{formatUpdatedAt(item)}</td>
                 </tr>

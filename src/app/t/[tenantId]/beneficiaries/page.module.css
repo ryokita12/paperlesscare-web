@@ -306,3 +306,14 @@
     grid-template-columns: 1fr;
   }
 }
+/* スマホ幅：一覧を最初の画面に表示し、表の列を必要最低限に絞る */
+@media (max-width: 600px) {
+  .hideOnMobile {
+    display: none;
+  }
+
+  .table th:nth-child(5),
+  .table td:nth-child(5) {
+    display: none;
+  }
+}
