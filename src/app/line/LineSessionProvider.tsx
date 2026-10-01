@@ -19,7 +19,7 @@ import { signInWithCustomToken } from "firebase/auth";
 import { httpsCallable } from "firebase/functions";
 import { auth, functions } from "@/lib/firebase";
 import { clearReloginFlag, getLineIdToken, reloginOnce } from "@/lib/line/liff";
-import { LineCenteredMessage, LineSpinner } from "./ui";
+import { friendlyErrorMessage, LineCenteredMessage, LineSpinner } from "./ui";
 
 type LineSessionResult =
   | {
@@ -125,7 +125,14 @@ export default function LineSessionProvider({ children }: { children: ReactNode 
         setSession({ phase: "redirecting" });
         return;
       }
-      setSession({ phase: "error", message: errorMessage(e) });
+      console.error("[line] sign-in failed", errorCode(e), errorMessage(e));
+      setSession({
+        phase: "error",
+        message: friendlyErrorMessage(
+          e,
+          "通信状況を確認して、もう一度お試しください。\n解決しない場合は、LINEを閉じて開き直してください。"
+        ),
+      });
     }
   }, [applyResult]);
 
@@ -176,6 +183,7 @@ export default function LineSessionProvider({ children }: { children: ReactNode 
     content = (
       <LineCenteredMessage
         title="うまく起動できませんでした"
+        tone="error"
         body={session.message}
         action={{ label: "もう一度試す", onClick: retry }}
       />

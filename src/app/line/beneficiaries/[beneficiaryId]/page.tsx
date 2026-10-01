@@ -1,6 +1,6 @@
 "use client";
 
-// LINEスタッフ用の利用者詳細：基本情報・現在の受給者証・履歴・「受給者証を更新」
+// LINEスタッフ用の利用者詳細：氏名 → 現在の受給者証 →「受給者証を更新」→ 基本情報 → 以前の受給者証
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import {
@@ -12,7 +12,16 @@ import {
 import { CERT_TYPES } from "@/app/t/[tenantId]/constants/certPages";
 import CertImageViewer from "@/app/t/[tenantId]/beneficiaries/[beneficiaryId]/CertImageViewer";
 import { useLineStaff } from "../../LineSessionProvider";
-import { LineBackLink, LineButton, LineCard, LineCenteredMessage, LineField, LineSpinner } from "../../ui";
+import {
+  friendlyErrorMessage,
+  IconCamera,
+  LineButton,
+  LineCard,
+  LineCenteredMessage,
+  LineField,
+  LinePageHeader,
+  LineSpinner,
+} from "../../ui";
 
 function formatIsoDate(value: string | null): string {
   if (!value) return "";
@@ -47,6 +56,7 @@ export default function LineBeneficiaryDetailPage() {
   const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "notFound" | "error">("loading");
   const [error, setError] = useState("");
+  const [showImage, setShowImage] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,8 +74,9 @@ export default function LineBeneficiaryDetailPage() {
         setCertificates(certs);
         setState("ready");
       } catch (e: unknown) {
+        console.error("[line] load beneficiary failed", e);
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        setError(friendlyErrorMessage(e, "通信状況を確認して、もう一度お試しください。"));
         setState("error");
       }
     })();
@@ -76,10 +87,24 @@ export default function LineBeneficiaryDetailPage() {
 
   if (state === "loading") return <LineSpinner />;
   if (state === "notFound") {
-    return <LineCenteredMessage title="利用者が見つかりません" body="一覧から選び直してください。" />;
+    return (
+      <LineCenteredMessage
+        tone="error"
+        title="利用者が見つかりません"
+        body="一覧から選び直してください。"
+        action={{ label: "利用者一覧へ", href: "/line/beneficiaries" }}
+      />
+    );
   }
   if (state === "error" || !beneficiary) {
-    return <LineCenteredMessage title="利用者を読み込めませんでした" body={error} />;
+    return (
+      <LineCenteredMessage
+        tone="error"
+        title="利用者を読み込めませんでした"
+        body={error}
+        action={{ label: "利用者一覧へ", href: "/line/beneficiaries" }}
+      />
+    );
   }
 
   // listCertificates は現在の証を先頭に返す
@@ -88,71 +113,91 @@ export default function LineBeneficiaryDetailPage() {
   const history = hasCurrent ? certificates.slice(1) : certificates;
   const page1Path = current?.pages.find((p, i) => (p.pageNo ?? i + 1) === 1)?.storagePath ?? "";
 
-  const name = beneficiary.profile.name || beneficiary.summary.name || "氏名未登録";
+  const name = beneficiary.profile.name || beneficiary.summary.name;
+  const furigana = beneficiary.profile.furigana || beneficiary.summary.furigana;
+  const expired = !!current && isExpired(current);
 
   return (
-    <div className="space-y-4">
-      <LineBackLink href="/line/beneficiaries" label="利用者一覧に戻る" />
-
-      <div className="px-1">
-        {(beneficiary.profile.furigana || beneficiary.summary.furigana) && (
-          <div className="text-xs text-zinc-500">
-            {beneficiary.profile.furigana || beneficiary.summary.furigana}
-          </div>
-        )}
-        <h1 className="text-2xl font-bold break-words">{name}</h1>
-      </div>
-
-      <LineCard>
-        <LineField label="氏名" value={name} />
-        <LineField label="生年月日" value={beneficiary.profile.birthday || beneficiary.summary.birthday} />
-        <LineField label="受給者番号" value={beneficiary.summary.number} />
-        <LineField label="支給市町村" value={beneficiary.summary.cityName} />
-      </LineCard>
+    <div className="space-y-5">
+      <LinePageHeader
+        back={{ href: "/line/beneficiaries", label: "利用者一覧" }}
+        title={
+          <>
+            {furigana && <span className="block text-base font-normal text-zinc-500">{furigana}</span>}
+            {name ? (
+              <>
+                {name}
+                <span className="ml-1 text-lg font-normal text-zinc-500">さん</span>
+              </>
+            ) : (
+              "氏名未登録"
+            )}
+          </>
+        }
+      />
 
       <LineCard>
         <div className="flex items-center justify-between gap-2">
-          <div className="text-base font-bold">現在の受給者証</div>
-          {current && isExpired(current) && (
-            <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-bold text-red-600">期限切れ</span>
-          )}
+          <div className="text-lg font-bold">受給者証</div>
+          {current &&
+            (expired ? (
+              <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-bold text-red-600">期限切れ</span>
+            ) : (
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-700">現在の証</span>
+            ))}
         </div>
 
         {current ? (
-          <div className="mt-2">
-            <LineField label="種類" value={certTypeLabel(current.certType)} />
-            <LineField label="受給者番号" value={current.summary.number} />
-            <LineField label="交付年月日" value={current.issueDate} />
+          <div className="mt-1 divide-y divide-zinc-100">
             <LineField label="有効期間" value={validityText(current)} />
-            <div className="mt-4">
-              <CertImageViewer storagePath={page1Path} />
-            </div>
+            <LineField label="受給者番号" value={current.summary.number} />
+            <LineField label="種類" value={certTypeLabel(current.certType)} />
+            <LineField label="交付年月日" value={current.issueDate} />
+            {page1Path && (
+              <div className="pt-3">
+                {showImage ? (
+                  <CertImageViewer storagePath={page1Path} />
+                ) : (
+                  <LineButton variant="secondary" onClick={() => setShowImage(true)}>
+                    受給者証の写真を見る
+                  </LineButton>
+                )}
+              </div>
+            )}
           </div>
         ) : (
-          <p className="mt-3 text-sm text-zinc-500">受給者証はまだ登録されていません。</p>
+          <p className="mt-3 text-base text-zinc-500">受給者証はまだ登録されていません。</p>
         )}
       </LineCard>
 
-      <LineButton href={`/line/import?beneficiaryId=${encodeURIComponent(beneficiary.id)}&new=1`}>
-        <span aria-hidden className="text-xl">📷</span>
-        {current ? "受給者証を更新" : "受給者証を登録"}
-      </LineButton>
-      {current && (
-        <p className="px-1 text-center text-xs text-zinc-500">
-          更新しても、今の受給者証は履歴として残ります
-        </p>
-      )}
+      <div className="space-y-2">
+        <LineButton href={`/line/import?beneficiaryId=${encodeURIComponent(beneficiary.id)}&new=1`}>
+          <IconCamera className="h-6 w-6" />
+          {current ? "受給者証を更新する" : "受給者証を登録する"}
+        </LineButton>
+        {current && (
+          <p className="px-1 text-center text-sm text-zinc-500">更新しても、今の受給者証は履歴として残ります</p>
+        )}
+      </div>
+
+      <LineCard>
+        <div className="text-lg font-bold">基本情報</div>
+        <div className="mt-1 divide-y divide-zinc-100">
+          <LineField label="生年月日" value={beneficiary.profile.birthday || beneficiary.summary.birthday} />
+          <LineField label="支給市町村" value={beneficiary.summary.cityName} />
+        </div>
+      </LineCard>
 
       {history.length > 0 && (
         <LineCard>
-          <div className="text-base font-bold">以前の受給者証（{history.length}件）</div>
-          <ul className="mt-2">
+          <div className="text-lg font-bold">以前の受給者証（{history.length}件）</div>
+          <ul className="mt-1 divide-y divide-zinc-100">
             {history.map((cert) => (
-              <li key={cert.id} className="border-b border-zinc-100 py-3 text-sm last:border-b-0">
-                <div className="font-semibold">{validityText(cert) || "有効期間 未登録"}</div>
-                <div className="mt-1 text-xs text-zinc-500">
+              <li key={cert.id} className="py-3">
+                <div className="text-base font-semibold">{validityText(cert) || "有効期間 未登録"}</div>
+                <div className="mt-0.5 text-sm text-zinc-500">
                   {cert.issueDate ? `交付 ${cert.issueDate}` : "交付日 未登録"}
-                  {cert.summary.number ? `　受給者番号 ${cert.summary.number}` : ""}
+                  {cert.summary.number ? `・受給者番号 ${cert.summary.number}` : ""}
                 </div>
               </li>
             ))}

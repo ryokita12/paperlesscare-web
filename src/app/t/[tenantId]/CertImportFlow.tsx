@@ -36,6 +36,7 @@ import {
   loadPageImages,
   savePageImage,
 } from "./lib/storage/importImageStore";
+import LineCertImportView from "@/app/line/import/LineCertImportView";
 
 type OcrResponse = { text?: string };
 
@@ -147,6 +148,8 @@ type ImportRoutes = {
   capture: string | null;
   beneficiaries: string;
   beneficiaryDetail: (beneficiaryId: string) => string;
+  // 保存成功後の遷移先。LINE版は完了画面、管理Webは利用者詳細
+  afterSave: (beneficiaryId: string, wasExisting: boolean) => string;
 };
 
 export type CertImportVariant = "admin" | "line";
@@ -158,6 +161,8 @@ function importRoutes(tenantId: string, variant: CertImportVariant): ImportRoute
       capture: null,
       beneficiaries: "/line/beneficiaries",
       beneficiaryDetail: (id) => `/line/beneficiaries/${id}`,
+      afterSave: (id, wasExisting) =>
+        `/line/import/done?beneficiaryId=${encodeURIComponent(id)}&mode=${wasExisting ? "update" : "new"}`,
     };
   }
   return {
@@ -165,6 +170,7 @@ function importRoutes(tenantId: string, variant: CertImportVariant): ImportRoute
     capture: `/t/${tenantId}/capture`,
     beneficiaries: `/t/${tenantId}/beneficiaries`,
     beneficiaryDetail: (id) => `/t/${tenantId}/beneficiaries/${id}`,
+    afterSave: (id) => `/t/${tenantId}/beneficiaries/${id}`,
   };
 }
 
@@ -224,6 +230,10 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  // LINE版の画面表示用（管理Webは status / saveMessage の文言で表示する）
+  const [ocrError, setOcrError] = useState<unknown>(null);
+  const [saveError, setSaveError] = useState<unknown>(null);
+  const [saved, setSaved] = useState(false);
   const [activePageIndex, setActivePageIndex] = useState(initialPage);
   const [selectedCertType, setSelectedCertType] = useState<CertTypeId>(
     () => restoredSession?.selectedCertType ?? "adult"
@@ -598,6 +608,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
     if (!user) return;
 
     setBusy(true);
+    setOcrError(null);
     setStatus(`${activePageIndex + 1}/${PAGE_COUNT} をOCR中...`);
 
     updateCurrentPage((page) => ({
@@ -644,6 +655,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
           : `⚠️ ${activePageIndex + 1}/${PAGE_COUNT} のOCR結果が空でした`
       );
     } catch (e: unknown) {
+      setOcrError(e);
       setStatus(`❌ Error: ${formatError(e)}`);
     } finally {
       setBusy(false);
@@ -672,6 +684,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
     const isExistingBeneficiary = !!targetBeneficiaryId;
 
     setSaving(true);
+    setSaveError(null);
     setSaveMessage("画像をアップロード中...");
 
     // 途中まで成功したアップロードを、失敗時に削除できるよう記録しておく
@@ -729,6 +742,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
       }
 
       const savedBeneficiaryId = beneficiaryId;
+      setSaved(true);
 
       setSaveMessage("✅ 保存しました。利用者詳細を表示します...");
       setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
@@ -743,17 +757,64 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
       clearImportSession(tenantId);
       void clearPageImages(tenantId);
 
-      router.push(routes.beneficiaryDetail(savedBeneficiaryId));
+      const savedPath = routes.afterSave(savedBeneficiaryId, isExistingBeneficiary);
+      // LINE版は完了画面から「戻る」で取込画面へ戻らないよう履歴を置き換える
+      if (isLine) router.replace(savedPath);
+      else router.push(savedPath);
     } catch (e: unknown) {
       // アップロード失敗時・Firestore保存失敗時のいずれも、今回アップロード済みの
       // 画像は孤立させず可能な範囲で削除する。入力内容・OCR結果（pages）はそのまま
       // 保持し、再度「確定して保存」を押せば同じ受給者IDへ再送信できるようにする。
       await Promise.allSettled(uploadedPaths.map((p) => deleteObject(ref(storage, p))));
+      console.error("[import] save failed", formatError(e));
+      setSaveError(e);
       setSaveMessage(`❌ 保存に失敗しました: ${formatError(e)}`);
     } finally {
       setSaving(false);
     }
   };
+
+  // LINEスタッフ版：処理は上記のまま共通で、表示だけスマートフォン向けの画面に切り替える
+  if (isLine) {
+    return (
+      <LineCertImportView
+        authLoading={loading}
+        signedIn={!!user}
+        target={
+          targetBeneficiaryId
+            ? {
+                id: targetBeneficiaryId,
+                name: targetBeneficiary
+                  ? targetBeneficiary.profile.name || targetBeneficiary.summary.name || ""
+                  : "",
+                hasCertificate:
+                  !!targetBeneficiary?.currentCertificateId || !!targetBeneficiary?.hasLegacyCertificate,
+              }
+            : null
+        }
+        targetLoading={!!targetBeneficiaryId && !targetBeneficiary}
+        certType={selectedCertType}
+        onChangeCertType={setSelectedCertType}
+        pages={pages}
+        activePageIndex={activePageIndex}
+        onChangePage={setActivePageIndex}
+        busy={busy}
+        compressing={compressing}
+        ocrError={ocrError}
+        onFileChosen={(file) => void onFileChosen(file)}
+        onRetryOcr={() => void startImport()}
+        onChangeField={updateFormField}
+        saving={saving}
+        saveError={saveError}
+        saved={saved}
+        onSave={() => void handleSaveBeneficiary()}
+        onDiscard={() => {
+          clearImportSession(tenantId);
+          void clearPageImages(tenantId);
+        }}
+      />
+    );
+  }
 
   if (loading) {
     return (

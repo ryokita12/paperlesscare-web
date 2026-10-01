@@ -1,32 +1,34 @@
 "use client";
 
-// LINEスタッフTOP
+// LINEスタッフTOP。主要な操作は「受給者証を登録する」「利用者を確認する」の2つだけ。
 import { useLineStaff } from "../LineSessionProvider";
-import { LineButton } from "../ui";
+import { IconCamera, IconUsers, LineChoiceTile } from "../ui";
 
 export default function LineHomePage() {
   const { tenantName, staffName } = useLineStaff();
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl border border-emerald-100 bg-white px-6 py-6 shadow-sm">
-        <div className="text-sm font-semibold text-emerald-700">{tenantName || "PaperlessCare"}</div>
-        <div className="mt-3 text-2xl font-bold">{staffName}さん</div>
-        <div className="mt-1 text-base text-zinc-600">お疲れさまです</div>
+    <div className="space-y-8 pt-2">
+      <div className="px-1">
+        {tenantName && <div className="text-sm font-semibold text-emerald-700">{tenantName}</div>}
+        <div className="mt-2 text-[1.6rem] font-bold leading-snug break-words">こんにちは、{staffName}さん</div>
+        <div className="mt-1 text-lg text-zinc-600">今日は何をしますか？</div>
       </div>
 
-      <div>
-        <div className="mb-3 px-1 text-base font-bold">何をしますか？</div>
-        <div className="space-y-4">
-          <LineButton href="/line/import?new=1" className="py-6 text-lg">
-            <span aria-hidden className="text-2xl">📷</span>
-            受給者証を登録
-          </LineButton>
-          <LineButton href="/line/beneficiaries" variant="secondary" className="py-6 text-lg">
-            <span aria-hidden className="text-2xl">👥</span>
-            利用者を見る
-          </LineButton>
-        </div>
+      <div className="space-y-4">
+        <LineChoiceTile
+          href="/line/import/start"
+          emphasis
+          icon={<IconCamera className="h-8 w-8" />}
+          title="受給者証を登録する"
+          description="写真を撮ってかんたん登録"
+        />
+        <LineChoiceTile
+          href="/line/beneficiaries"
+          icon={<IconUsers className="h-8 w-8" />}
+          title="利用者を確認する"
+          description="登録済みの利用者を検索・確認"
+        />
       </div>
     </div>
   );
