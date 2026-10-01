@@ -376,12 +376,15 @@ export const getStaffAuthKeyStatus = onCall(async (req): Promise<StaffAuthKeySta
   const { tenantId } = await requireTenantAdmin(req);
 
   const tenant = ((await db().doc(`tenants/${tenantId}`).get()).data() ?? {}) as TenantDoc;
-  const countSnap = await db()
+  // 単一フィールドの条件だけで取得し（複合インデックス不要）、有効なスタッフを数える
+  const lineUsersSnap = await db()
     .collection("lineUsers")
     .where("tenantId", "==", tenantId)
-    .where("status", "==", "active")
-    .count()
+    .select("status", "role")
     .get();
+  const lineStaffCount = lineUsersSnap.docs.filter(
+    (d) => d.get("status") === "active" && d.get("role") === "staff"
+  ).length;
 
   return {
     tenantId,
@@ -389,7 +392,7 @@ export const getStaffAuthKeyStatus = onCall(async (req): Promise<StaffAuthKeySta
     configured: !!tenant.staffAuthKeyHash,
     enabled: tenant.staffAuthKeyEnabled === true,
     updatedAt: tenant.staffAuthKeyUpdatedAt?.toDate().toISOString() ?? null,
-    lineStaffCount: countSnap.data().count,
+    lineStaffCount,
   };
 });
 
