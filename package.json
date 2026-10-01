@@ -10,6 +10,7 @@
     "test": "node --experimental-strip-types --test"
   },
   "dependencies": {
+    "@line/liff": "^2.31.1",
     "firebase": "^12.7.0",
     "next": "16.1.1",
     "react": "19.2.3",
