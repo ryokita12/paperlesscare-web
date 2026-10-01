@@ -5,7 +5,7 @@
 ## 1. 構成
 
 ```
-リッチメニュー → https://liff.line.me/2011820567-88I5QrPj
+リッチメニュー → https://liff.line.me/2011820567-88l5QrPj
   → /line（LIFF）→ LINE ID token
   → Functions lineSignIn（LINE verify APIで本人確認。userIdは信用しない）
   → 登録済みスタッフ：Custom Token（uid = line_{LINE userId}）→ signInWithCustomToken → /line/home
@@ -52,8 +52,8 @@
 2. Functionsデプロイ：
    `firebase deploy --only functions:lineSignIn,functions:lineRegisterStaff,functions:getStaffAuthKeyStatus,functions:updateStaffAuthKey --project paperlesscare`
    （`functions/.env` の `LINE_LOGIN_CHANNEL_ID=2011820567` が使われる）
-3. Vercel：Production に `NEXT_PUBLIC_LIFF_ID=2011820567-88I5QrPj` を追加し、本ブランチをmainへマージしてデプロイ。
+3. Vercel：Production に `NEXT_PUBLIC_LIFF_ID=2011820567-88l5QrPj` を追加し、本ブランチをmainへマージしてデプロイ。
 4. 事業所名：Firebase Console → Firestore → `tenants/{ひなゆりのtenantId}` に `name`（string）=「みどり児童支援センターひなゆり」。
 5. 認証キー：本番管理Webにデモユーザーでログイン → システム設定 → LINEスタッフ設定 → `hinayuri` を入力して「認証キーを更新」。
 6. LINE Developers：LINE Loginチャネルを Published に。LIFFのEndpoint URL / Scope（openid, profile）を再確認。
-7. リッチメニュー：リンク先を `https://liff.line.me/2011820567-88I5QrPj` に変更。
+7. リッチメニュー：リンク先を `https://liff.line.me/2011820567-88l5QrPj` に変更。

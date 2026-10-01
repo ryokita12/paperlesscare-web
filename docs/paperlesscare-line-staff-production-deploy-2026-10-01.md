@@ -29,11 +29,11 @@ gcloud のデフォルトプロジェクトは `linkbook-forappointment` のま�
 | 項目 | 値・状態 |
 |---|---|
 | LINE Login Channel ID | 2011820567 |
-| LIFF ID | 2011820567-88I5QrPj |
+| LIFF ID | 2011820567-88l5QrPj（`88l5` の `l` は小文字のエル U+006C。11章 問題3参照） |
 | LIFF Endpoint URL | https://paperlesscare-web.vercel.app/line |
 | Scope | openid, profile |
 | LINE Login チャネル公開状態 | **未変更**（今回の作業では公開操作を行っていない。現在の状態は LINE Developers Console で要確認） |
-| リッチメニューURL | **未変更**（最終的な設定値：`https://liff.line.me/2011820567-88I5QrPj`） |
+| リッチメニューURL | 本作業では変更していない。ユーザーが正しい `https://liff.line.me/2011820567-88l5QrPj` を設定済み（ユーザー申告、2026-10-01） |
 
 Channel Secret 等の秘密情報は本実装では使用していない（ID token 検証は Channel ID のみで行う）。
 
@@ -70,7 +70,7 @@ Channel Secret 等の秘密情報は本実装では使用していない（ID to
 | 項目 | 結果 |
 |---|---|
 | main への反映 | 済み（`d4162b3c`） |
-| `NEXT_PUBLIC_LIFF_ID` | Vercel Production に `2011820567-88I5QrPj` を追加（Type：Config、Environment：Production）。NEXT_PUBLIC はビルド時に埋め込まれるため、main への push より **前** に設定した |
+| `NEXT_PUBLIC_LIFF_ID` | Vercel Production に `2011820567-88l5QrPj` を追加（Type：Config、Environment：Production）。NEXT_PUBLIC はビルド時に埋め込まれるため、main への push より **前** に設定した |
 | Production デプロイ | main push により自動デプロイ。Vercel Deployments で `d4162b3` の Production ビルドを確認後、本番URLで新ルートが応答することを確認 |
 | LIFF ID の埋め込み | 本番 `/line` が読み込む JS チャンクに LIFF ID が含まれていることを確認 |
 | `/line` 系ルート | `/line`、`/line/register`、`/line/home`、`/line/beneficiaries`、`/line/import` がいずれも HTTP 200。**LINEアプリ内（LIFF）での表示・動作は未確認**（通常ブラウザで開くとLINEログインへ遷移する仕様のため、ブラウザからの画面操作は行っていない） |
@@ -141,7 +141,7 @@ Channel Secret 等の秘密情報は本実装では使用していない（ID to
 ## 10. 次に行う作業（実行順）
 
 1. LINE Developers Console で LINE Login チャネル（2011820567）を **Published** にする（Developing のままでは管理者・テスター以外ログインできない）。LIFF の Endpoint URL / Scope を再確認。
-2. LINE Official Account Manager でリッチメニューのリンク先を `https://liff.line.me/2011820567-88I5QrPj` に変更。
+2. LINE Official Account Manager でリッチメニューのリンク先を `https://liff.line.me/2011820567-88l5QrPj` に変更。
 3. スタッフ役のスマホで LINE公式アカウントのリッチメニュー → PaperlessCare を起動。
 4. 「はじめてのご利用」→「スタッフ」を選択 → 次へ。
 5. 氏名と認証キー `hinayuri` を入力 →「認証して登録」→ スタッフTOP（みどり児童支援センターひなゆり／○○さん）。
@@ -164,6 +164,13 @@ Channel Secret 等の秘密情報は本実装では使用していない（ID to
 
 ### 問題2：gcloud の再認証が必要だった（解決済み）
 - gcloud のトークンが失効しており非対話で更新できなかったため、ユーザーが `gcloud auth login` を実施。
+
+### 問題3：LIFF ID の1文字取り違え（修正済み）
+- 事象：Vercel Production の `NEXT_PUBLIC_LIFF_ID` と本番ビルドに `2011820567-88I5QrPj`（14文字目が大文字 I、U+0049）が設定されていた。LINE Developers からコピーした正しい値は `2011820567-88l5QrPj`（小文字 l、U+006C）。
+- 原因：作業指示で受け取った文字列の `l` が大文字 `I` になっており、それをそのまま設定した。フォントによって I と l の見分けがつかない。
+- 影響：このままではLIFF初期化に失敗する（LINEチャネル公開・実機テスト前に発見したため、利用者への影響なし）。Functions は Channel ID のみを使うため影響なし。
+- 対応：Vercel Production の `NEXT_PUBLIC_LIFF_ID` を `2011820567-88l5QrPj` に修正してProductionを再デプロイし、本番JSに埋め込まれた値をコードポイント単位で確認。本レポート・実装レポートの LIFF ID / LIFF URL も修正。
+- 今後：IDの受け渡しはコピー＆ペーストに限定し、設定後は本番バンドルの値をコードポイント単位で照合する。
 
 ### 注意事項
 - Vercel ダッシュボード操作時に「Verify Your Secondary Email」画面が2回表示された。「Skip for Now」のみ押下し、アカウント設定は変更していない。
