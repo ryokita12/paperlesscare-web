@@ -17,7 +17,9 @@ import {
   createEmptyPages,
   getPageCount,
   getPageTitle,
+  hasImportWork,
   pagesAfterCertTypeChange,
+  resolveInitialCertTypeForUpdate,
   shouldResetPagesOnCertTypeChange,
 } from "./constants/certPages";
 import PageTabs from "./components/PageTabs";
@@ -284,6 +286,9 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const pagesRef = useRef<CertPage[]>(pages);
+  // 利用者の取得（非同期）を待つ間の種別の初期選択に使う：現在選択中の種別と、ユーザーが種別を選び直したか
+  const selectedCertTypeRef = useRef<CertTypeId>(selectedCertType);
+  const userChangedCertTypeRef = useRef(false);
   const hasHydratedSessionRef = useRef(false);
 
   const nextPath = routes.importPage;
@@ -307,9 +312,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
     if (next === selectedCertType) return;
 
     if (shouldResetPagesOnCertTypeChange(selectedCertType, next)) {
-      const hasWork = pagesRef.current.some(
-        (page) => !!page.selectedFile || !!page.ocrText || Object.values(page.formData).some(Boolean)
-      );
+      const hasWork = hasImportWork(pagesRef.current);
       if (
         hasWork &&
         !window.confirm("受給者証の種類を変更すると、取り込んだ画像と読み取った内容は消えます。変更しますか？")
@@ -328,6 +331,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
       void clearPageImages(tenantId);
     }
 
+    userChangedCertTypeRef.current = true;
     setSelectedCertType(next);
   };
 
@@ -353,6 +357,10 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
   useEffect(() => {
     pagesRef.current = pages;
   }, [pages]);
+
+  useEffect(() => {
+    selectedCertTypeRef.current = selectedCertType;
+  }, [selectedCertType]);
 
   useEffect(() => {
     setActivePageIndex(initialPage);
@@ -399,8 +407,31 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
       .then((record) => {
         if (cancelled || !record) return;
         setTargetBeneficiary(record);
-        // 取込を新しく始めた場合は、現在の受給者証と同じ種別を初期選択にする
-        // （管理Web／LINE のそれぞれで選択できない種別＝非公開の種別は初期選択にしない）
+
+        if (variant === "admin") {
+          // 管理Web：現在の受給者証の種別を初期選択にする（tsusho なら7ページで作り直す）。
+          // 同じ利用者の取込を復元した場合・ユーザーが選び直した場合・取込内容がある場合は切り替えない
+          // （判定は resolveInitialCertTypeForUpdate）。種別が無い・未知なら adult。
+          const decision = resolveInitialCertTypeForUpdate({
+            beneficiaryCertType: record.certType,
+            selectedCertType: selectedCertTypeRef.current,
+            restoredSessionForSameBeneficiary:
+              !!restoredSession && restoredSession.targetBeneficiaryId === record.id,
+            userChangedCertType: userChangedCertTypeRef.current,
+            hasImportWork: hasImportWork(pagesRef.current),
+          });
+          if (decision) {
+            if (decision.resetPages) {
+              setPages(createEmptyPages(decision.certType));
+              setActivePageIndex((index) => clamp(index, 0, getPageCount(decision.certType) - 1));
+            }
+            setSelectedCertType(decision.certType);
+          }
+          return;
+        }
+
+        // LINE（従来どおり）：取込を新しく始めた場合は、現在の受給者証と同じ種別を初期選択にする
+        // （LINE で選択できない種別＝tsusho は初期選択にしない）
         // 初期化のための切り替えなので、取込内容を破棄する必要がある（様式の系統が変わる）場合は切り替えない
         const sameType = CERT_TYPES.find((t) => t.id === record.certType);
         if (!restoredSession && sameType && isCertTypeSelectable(sameType.id, variant)) {
@@ -988,7 +1019,10 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <div className="text-sm font-bold">{type.shortLabel}</div>
-                      <div className="mt-1 text-xs opacity-70">{type.colorName}</div>
+                      {/* tsusho は色名ではなく名称（＝表示名と同じ）のため、同じ文言を2回出さない */}
+                      {type.colorName !== type.shortLabel && (
+                        <div className="mt-1 text-xs opacity-70">{type.colorName}</div>
+                      )}
 
                       {type.statusLabel && (
                         <div className="mt-2 inline-flex rounded-full bg-white/70 px-2 py-1 text-[11px] font-bold text-zinc-500">
@@ -1029,7 +1063,9 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
 
           <div className="mt-3 grid gap-3 md:grid-cols-[1fr_1.4fr] md:items-center">
             <div className={`rounded-xl border px-4 py-2 text-sm font-semibold ${currentCertType.themeClass}`}>
-              {currentCertType.colorName.replace("色の受給者証", "")}：{currentCertType.label}
+              {currentCertType.colorName === currentCertType.label
+                ? currentCertType.label
+                : `${currentCertType.colorName.replace("色の受給者証", "")}：${currentCertType.label}`}
             </div>
 
             <div>

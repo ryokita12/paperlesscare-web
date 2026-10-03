@@ -16,6 +16,13 @@
 //   - beneficiaries.ts：新しい利用者のカルテ初期値（initialChart）と、profile の扱い（certificateModel）を呼ぶだけ
 //   - OCR → カルテ反映の候補（candidates.ts）は、まだアプリから使わない（Phase 1-B7）
 //   - tsusho は引き続き非公開
+//
+// 【Phase 1-B6 で意図的に更新】
+// tsusho を管理Webにだけ公開した。境界を次のように更新した：
+//   - enabled / adminVisible = true（管理Webで選択可能）、lineEnabled = false（LINE には出さない）
+//   - LINE の取込画面は lineCertTypeOptions を通すため、tsusho は表示されない
+//   - 見本画像（public/cert-samples/tsusho）は無いため、ページタブは getSampleImagePath（null）で 404 を出さない
+//   - candidates は引き続き未接続（Phase 1-B7）
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -24,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import {
   CERT_TYPES,
   getPageCount,
+  lineCertTypeOptions,
   PAGE_COUNT,
 } from "../../app/t/[tenantId]/constants/certPages.ts";
 
@@ -70,12 +78,13 @@ test("境界：OCR → カルテ反映の候補（candidates）は、まだア�
   assert.deepEqual(users, []);
 });
 
-test("境界：tsusho は内部の種別として存在するが、enabled / lineEnabled / adminVisible はすべて false", () => {
+test("境界：tsusho は管理Webだけ公開（enabled / adminVisible = true）、LINE は非公開（lineEnabled = false）", () => {
   const tsusho = CERT_TYPES.find((t) => t.id === "tsusho");
   assert.ok(tsusho, "tsusho が CERT_TYPES に存在すること");
-  assert.equal(tsusho.enabled, false);
+  assert.equal(tsusho.enabled, true);
+  assert.equal(tsusho.adminVisible, true);
   assert.equal(tsusho.lineEnabled, false);
-  assert.equal(tsusho.adminVisible, false);
+  assert.equal(lineCertTypeOptions().some((t) => t.id === "tsusho"), false);
 });
 
 test("境界：certificateModel の tsusho は extractTsushoValidity を呼ぶだけ、beneficiaries は保存モデルの関数を呼ぶだけ", () => {

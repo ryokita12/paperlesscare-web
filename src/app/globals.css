@@ -105,6 +105,12 @@ a {
   border-color: #6ee7b7;
 }
 
+/* 通所受給者証：用紙の色は公式に定めが無いため、色名と結びつかない中立の色にする */
+.cert-type-tsusho {
+  background: #eff6ff;
+  border-color: #93c5fd;
+}
+
 .cert-type-active {
   border-width: 2px;
   box-shadow: 0 0 0 2px rgba(0,0,0,0.1);

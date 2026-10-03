@@ -12,7 +12,7 @@ function periodText(cert: CertificateRecord): string {
 }
 
 export default function CertificateHighlightsCard({ certificate }: { certificate: CertificateRecord }) {
-  const h = extractCertificateHighlights(certificate.pages);
+  const h = extractCertificateHighlights(certificate.pages, certificate.certType);
   const empty = "未取得";
 
   return (

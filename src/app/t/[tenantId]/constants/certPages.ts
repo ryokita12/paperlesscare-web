@@ -47,18 +47,19 @@ export const CERT_TYPES = [
     statusLabel: "",
   },
   // 通所受給者証（児童福祉法・こども家庭庁 様式第9号）。child（障害福祉サービス受給者証・18歳未満）とは別の証。
-  // Phase 1-B3 では内部にだけ登録し、管理Web・LINE のどちらにも表示しない（hidden integration）。
-  // 7ページ構成・ページ数の種別化（getPageCount）は Phase 1-B4 で画面へ接続する。
+  // Phase 1-B3 で内部に登録（非公開）、Phase 1-B4 で7ページ化、Phase 1-B5 で保存に対応。
+  // Phase 1-B6 で管理Webにだけ公開する。LINE（lineEnabled）はまだ公開しない。
+  // 用紙の色は公式に定めが無いため、colorName は色名ではなく名称で示す。
   {
     id: "tsusho",
     label: "通所受給者証",
     shortLabel: "通所受給者証",
     colorName: "通所受給者証",
-    themeClass: "",
-    enabled: false,
+    themeClass: "cert-type-tsusho",
+    enabled: true,
     lineEnabled: false,
-    adminVisible: false,
-    statusLabel: "準備中",
+    adminVisible: true,
+    statusLabel: "",
   },
 ] as const;
 
@@ -196,6 +197,23 @@ export function getPageCount(certType: string | null | undefined): number {
   return defs ? defs.length : PAGE_COUNT;
 }
 
+// ページタブのサムネイルに使う見本画像（public/cert-samples/{certType}/page-N.png）がある種別。
+// tsusho は非PIIの見本画像がリポジトリに無いため含めない（存在しない画像を参照して 404 にしない）。
+const CERT_TYPES_WITH_SAMPLE_IMAGES: readonly string[] = ["mobility", "adult", "child"];
+
+/**
+ * ページタブのサムネイルに使う見本画像のパス。見本画像が無い種別・範囲外のページは null
+ * （呼び出し側は画像の代わりに「見本画像なし」を表示する）。
+ */
+export function getSampleImagePath(
+  certType: string | null | undefined,
+  pageIndex: number
+): string | null {
+  if (!certType || !CERT_TYPES_WITH_SAMPLE_IMAGES.includes(certType)) return null;
+  if (!isValidPageIndex(certType, pageIndex)) return null;
+  return `/cert-samples/${certType}/page-${pageIndex + 1}.png`;
+}
+
 /** その種別で有効なページ番号（0始まり）か */
 export function isValidPageIndex(certType: string | null | undefined, pageIndex: number): boolean {
   return Number.isInteger(pageIndex) && pageIndex >= 0 && pageIndex < getPageCount(certType);
@@ -227,6 +245,47 @@ export function shouldResetPagesOnCertTypeChange(
   return (
     certFormFamily(from) !== certFormFamily(to) || getPageCount(from) !== getPageCount(to)
   );
+}
+
+/** 未保存の取込内容（画像・OCR結果・入力）があるか */
+export function hasImportWork(
+  pages: readonly { selectedFile?: unknown; ocrText?: string; formData: Record<string, unknown> }[]
+): boolean {
+  return pages.some(
+    (page) => !!page.selectedFile || !!page.ocrText || Object.values(page.formData).some(Boolean)
+  );
+}
+
+/**
+ * 管理Webで既存利用者の「受給者証を更新」を開いたときの、受給者証の種別の初期選択。
+ * 戻り値が null なら何もしない（今の選択・取込内容のまま）。
+ *
+ *   - 現在の受給者証の種別（利用者docの certType。currentCertificateId と同時に更新される）が
+ *     管理Webで選択できる種別ならそれ、無い・未知・選択できない種別なら adult
+ *   - 次の場合は切り替えない（途中まで行った取込を勝手に消さない）
+ *       ・同じ利用者の取込セッションを復元した（スマホ撮影の往復など。復元した種別を優先）
+ *       ・利用者の取得を待つ間に、ユーザーが種別を選び直した
+ *       ・様式の系統が変わる（8ページ系 ⇔ tsusho）のに、すでに取込内容がある
+ *   - 様式の系統が変わる場合は resetPages = true（新しい種別のページ数の空ページで作り直す）
+ * LINE には使わない（LINE は色を選ぶ画面で種別を決める。tsusho は LINE で選択できない）。
+ */
+export function resolveInitialCertTypeForUpdate(params: {
+  beneficiaryCertType: string | null | undefined;
+  selectedCertType: CertTypeId;
+  restoredSessionForSameBeneficiary: boolean;
+  userChangedCertType: boolean;
+  hasImportWork: boolean;
+}): { certType: CertTypeId; resetPages: boolean } | null {
+  if (params.restoredSessionForSameBeneficiary || params.userChangedCertType) return null;
+
+  const next: CertTypeId = isCertTypeSelectable(params.beneficiaryCertType, "admin")
+    ? (params.beneficiaryCertType as CertTypeId)
+    : "adult";
+  if (next === params.selectedCertType) return null;
+
+  const resetPages = shouldResetPagesOnCertTypeChange(params.selectedCertType, next);
+  if (resetPages && params.hasImportWork) return null;
+  return { certType: next, resetPages };
 }
 
 /**

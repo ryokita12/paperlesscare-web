@@ -1,4 +1,4 @@
-import { getPageDefinitions, type CertTypeId } from "../constants/certPages";
+import { getPageDefinitions, getSampleImagePath, type CertTypeId } from "../constants/certPages";
 
 type Props = {
   pages: { previewUrl: string }[];
@@ -22,6 +22,7 @@ export default function PageTabs({
     const done = !!page.previewUrl;
     const active = index === activePageIndex;
     const definition = pageDefinitions[index];
+    const sampleImagePath = getSampleImagePath(selectedCertType, index);
 
     return (
       <button
@@ -37,11 +38,19 @@ export default function PageTabs({
         }`}
       >
         <div className="cert-thumbnail aspect-[2/3] w-full overflow-hidden rounded-lg border bg-white">
-          <img
-            src={`/cert-samples/${selectedCertType}/page-${index + 1}.png`}
-            alt={definition?.title || `ページ${index + 1}`}
-            className={`h-full w-full ${done ? "" : "opacity-70"}`}
-          />
+          {sampleImagePath ? (
+            <img
+              src={sampleImagePath}
+              alt={definition?.title || `ページ${index + 1}`}
+              className={`h-full w-full ${done ? "" : "opacity-70"}`}
+            />
+          ) : (
+            // 見本画像が無い種別（tsusho）は画像を参照せず、ページ番号だけを表示する（404 にしない）
+            <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-zinc-50 text-zinc-400">
+              <span className="text-lg font-bold">{index + 1}</span>
+              <span className="text-[9px]">見本画像なし</span>
+            </div>
+          )}
         </div>
 
         <div className="mt-1 flex items-start justify-between gap-1 pl-1">

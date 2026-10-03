@@ -200,13 +200,14 @@ test("feature flag: child.enabled は true で選択可能", () => {
   assert.equal(child.enabled, true);
 });
 
-test("feature flag: 選択可能な種別に adult と child が含まれる", () => {
-  // 取込画面は CERT_TYPES の enabled で選択可否を決めている。
+// 【Phase 1-B6 で意図的に更新】tsusho（通所受給者証）を管理Webで選択可能にした（LINE は非公開のまま）。
+test("feature flag: 選択可能な種別は adult / child / tsusho", () => {
+  // 取込画面は CERT_TYPES の enabled で選択可否を決めている（LINE はさらに lineEnabled で絞る）。
   const selectable = CERT_TYPES.filter((type) => type.enabled).map(
     (type) => type.id
   );
 
-  assert.deepEqual(selectable, ["adult", "child"]);
+  assert.deepEqual(selectable, ["adult", "child", "tsusho"]);
 });
 
 test("feature flag: 選択可能な種別には「今後実装予定」バッジを出さない", () => {
