@@ -11,6 +11,8 @@ import {
   PAGE_COUNT,
   CERT_TYPES,
   type CertTypeId,
+  adminCertTypeOptions,
+  isCertTypeSelectable,
   emptyFormData,
   createEmptyPage,
   getPageTitle,
@@ -356,8 +358,11 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
         if (cancelled || !record) return;
         setTargetBeneficiary(record);
         // 取込を新しく始めた場合は、現在の受給者証と同じ種別を初期選択にする
+        // （管理Web／LINE のそれぞれで選択できない種別＝非公開の種別は初期選択にしない）
         const sameType = CERT_TYPES.find((t) => t.id === record.certType);
-        if (!restoredSession && sameType?.enabled) setSelectedCertType(sameType.id);
+        if (!restoredSession && sameType && isCertTypeSelectable(sameType.id, variant)) {
+          setSelectedCertType(sameType.id);
+        }
       })
       .catch(() => {
         // 表示用の取得に失敗しても取込自体は続行できる（保存時に存在を再確認する）
@@ -366,7 +371,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [user, tenantId, targetBeneficiaryId, restoredSession]);
+  }, [user, tenantId, targetBeneficiaryId, restoredSession, variant]);
 
   // 取込中の状態（flowStep/importMode/selectedCertType/activePageIndex/beneficiaryId/
   // 各ページのformData・ocrText・storagePath）をtenantId単位でsessionStorageへ自動保存する。
@@ -918,7 +923,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
           </div>
 
           <div className="grid gap-2 md:grid-cols-3">
-            {CERT_TYPES.map((type) => {
+            {adminCertTypeOptions().map((type) => {
               const active = selectedCertType === type.id;
               const disabled = !type.enabled;
 

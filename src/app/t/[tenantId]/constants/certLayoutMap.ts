@@ -21,7 +21,15 @@ export type CertLayoutId =
   | "certificate2" // 障害福祉サービス受給者証（Ⅱ）
   | "planSupport" // 計画相談支援給付費の支給内容（問い合わせ先なし・adult）
   | "planSupportWithContact" // 同上（問い合わせ先あり・child）
-  | "userBurden"; // 利用者負担に関する事項
+  | "userBurden" // 利用者負担に関する事項
+  // 通所受給者証（様式第9号）。adult / child の様式とは別のレイアウト
+  | "tsushoBasic" // 一面：通所受給者証（通所給付決定保護者・児童）
+  | "tsushoDecision2" // 二面：障害児通所給付費の給付決定内容（1・2行目）
+  | "tsushoDecision3" // 三面：同（3・4行目）
+  | "tsushoConsultation" // 四面：障害児相談支援給付費の支給内容
+  | "tsushoBurden" // 五面：利用者負担に関する事項
+  | "tsushoProvider6" // 六面：障害児通所支援事業者記入欄（項目の読み取りは未対応）
+  | "tsushoProvider7"; // 七面：同
 
 // ページ7・8はいずれも「利用者負担に関する事項」で同一レイアウトを使う。
 const ADULT_LAYOUT_IDS: readonly CertLayoutId[] = [
@@ -54,10 +62,23 @@ const CHILD_LAYOUT_IDS: readonly CertLayoutId[] = [
   "userBurden",
 ];
 
+// 通所受給者証は7ページ（一〜七面）。Phase 1-B3 時点では画面から選択できないため、
+// ここは内部の対応表としてだけ使われる（8ページ目は存在しない）。
+const TSUSHO_LAYOUT_IDS: readonly CertLayoutId[] = [
+  "tsushoBasic",
+  "tsushoDecision2",
+  "tsushoDecision3",
+  "tsushoConsultation",
+  "tsushoBurden",
+  "tsushoProvider6",
+  "tsushoProvider7",
+];
+
 const CERT_LAYOUT_IDS: Record<CertTypeId, readonly CertLayoutId[]> = {
   mobility: ADULT_LAYOUT_IDS,
   adult: ADULT_LAYOUT_IDS,
   child: CHILD_LAYOUT_IDS,
+  tsusho: TSUSHO_LAYOUT_IDS,
 };
 
 // 帳票上「問い合わせ先」欄を持つレイアウト。

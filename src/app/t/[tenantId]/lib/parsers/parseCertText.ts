@@ -5,6 +5,7 @@ import { parseAdultPage1 } from "./adult/page1.ts";
 import { parseAdultPage2 } from "./adult/page2.ts";
 import { parseAdultPage3 } from "./adult/page3.ts";
 import { parseAdultPage4 } from "./adult/page4.ts";
+import { TSUSHO_PAGE_PARSERS } from "../../../../../lib/tsusho/parsers/index.ts";
 
 export type CertPageParser = (text: string) => FormDataType;
 
@@ -67,6 +68,11 @@ const CERT_PAGE_PARSERS: Record<
   },
   child: {},
   mobility: {},
+  // 通所受給者証（様式第9号）：一〜五面（index 0〜4）。六・七面（事業者記入欄）は parser なし。
+  // child（障害福祉サービス受給者証・18歳未満）とは別の証で、parser を共有しない。
+  // ここで登録するのは normalizeText 済みのテキストを受け取る各面の parser そのもの
+  // （parseTsushoCertText は normalizeText を内部で行うため登録しない＝二重適用しない）。
+  tsusho: TSUSHO_PAGE_PARSERS,
 };
 
 /**

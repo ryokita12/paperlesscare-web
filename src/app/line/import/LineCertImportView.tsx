@@ -8,9 +8,9 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CertPage } from "@/app/t/[tenantId]/types/cert";
 import {
-  CERT_TYPES,
   PAGE_COUNT,
   getPageDefinitions,
+  lineCertTypeOptions,
   type CertTypeId,
 } from "@/app/t/[tenantId]/constants/certPages";
 import CertLayoutRenderer from "@/app/t/[tenantId]/components/certLayouts";
@@ -224,7 +224,7 @@ export default function LineCertImportView(props: LineCertImportViewProps) {
         </div>
 
         <div className="space-y-4">
-          {CERT_TYPES.filter((t) => t.enabled).map((t) => {
+          {lineCertTypeOptions().map((t) => {
             const look = TYPE_SWATCH[t.id];
             const active = t.id === certType;
             return (

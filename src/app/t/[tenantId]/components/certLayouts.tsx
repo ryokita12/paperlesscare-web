@@ -8,6 +8,14 @@ import {
   hasContactInfoRow,
   type CertLayoutId,
 } from "../constants/certLayoutMap";
+import {
+  TsushoBasicLayout,
+  TsushoBurdenLayout,
+  TsushoConsultationLayout,
+  TsushoDecision2Layout,
+  TsushoDecision3Layout,
+  TsushoProviderLayout,
+} from "./tsushoLayouts";
 
 type Props = {
   certType: CertTypeId;
@@ -27,7 +35,8 @@ type LayoutProps = {
 // constants/certLayoutMap.ts の対応表を通じて種別ごとに差し替える。
 export type CertLayout = (props: LayoutProps) => React.ReactElement;
 
-function EditableCertCell({
+// 通所受給者証のレイアウト（tsushoLayouts.tsx）からも使うため export している（処理内容は変更なし）。
+export function EditableCertCell({
   value,
   field,
   onChangeField,
@@ -750,6 +759,14 @@ const LAYOUT_COMPONENTS: Record<CertLayoutId, CertLayout> = {
   planSupport: LayoutType6,
   planSupportWithContact: LayoutType6WithContactInfo,
   userBurden: LayoutType7,
+  // 通所受給者証（Phase 1-B3 時点では画面から選択できないため表示されない）
+  tsushoBasic: TsushoBasicLayout,
+  tsushoDecision2: TsushoDecision2Layout,
+  tsushoDecision3: TsushoDecision3Layout,
+  tsushoConsultation: TsushoConsultationLayout,
+  tsushoBurden: TsushoBurdenLayout,
+  tsushoProvider6: TsushoProviderLayout,
+  tsushoProvider7: TsushoProviderLayout,
 };
 
 /**
