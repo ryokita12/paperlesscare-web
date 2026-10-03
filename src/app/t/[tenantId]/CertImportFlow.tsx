@@ -8,14 +8,17 @@ import { storage, functions } from "@/lib/firebase";
 import { useRequireAuth } from "@/lib/auth";
 import type { CertPage } from "./types/cert";
 import {
-  PAGE_COUNT,
   CERT_TYPES,
   type CertTypeId,
   adminCertTypeOptions,
   isCertTypeSelectable,
   emptyFormData,
   createEmptyPage,
+  createEmptyPages,
+  getPageCount,
   getPageTitle,
+  pagesAfterCertTypeChange,
+  shouldResetPagesOnCertTypeChange,
 } from "./constants/certPages";
 import PageTabs from "./components/PageTabs";
 import CertLayoutRenderer from "./components/certLayouts";
@@ -210,10 +213,15 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
     return session;
   });
 
+  // 取込を始めるときの種別（取込中の状態を復元した場合はその種別）。
+  // ページ数は種別ごとに異なる（adult / child / mobility = 8、tsusho = 7）。
+  const initialCertType: CertTypeId = restoredSession?.selectedCertType ?? "adult";
+  const initialPageCount = getPageCount(initialCertType);
+
   const pageQueryParam = searchParams.get("page");
   const initialPage = pageQueryParam
-    ? clamp(Number(pageQueryParam) - 1, 0, PAGE_COUNT - 1)
-    : clamp(restoredSession?.activePageIndex ?? 0, 0, PAGE_COUNT - 1);
+    ? clamp(Number(pageQueryParam) - 1, 0, initialPageCount - 1)
+    : clamp(restoredSession?.activePageIndex ?? 0, 0, initialPageCount - 1);
 
   const [targetBeneficiaryId, setTargetBeneficiaryId] = useState<string>(
     () => urlTargetBeneficiaryId || restoredSession?.targetBeneficiaryId || ""
@@ -238,9 +246,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
   const [saveError, setSaveError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
   const [activePageIndex, setActivePageIndex] = useState(initialPage);
-  const [selectedCertType, setSelectedCertType] = useState<CertTypeId>(
-    () => restoredSession?.selectedCertType ?? "adult"
-  );
+  const [selectedCertType, setSelectedCertType] = useState<CertTypeId>(() => initialCertType);
   // 保存先の利用者ID。既存利用者への登録・更新ではその利用者のID、
   // 新規利用者の場合は取込開始時点で事前採番したIDを使う。
   // 受給者証IDも事前採番し、ページ画像は最初から
@@ -258,7 +264,8 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
   const [mobile, setMobile] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const [pages, setPages] = useState<CertPage[]>(() => {
-    const base = Array.from({ length: PAGE_COUNT }, () => createEmptyPage());
+    // 種別のページ数だけ作る。復元した取込にそれより多いページがあっても読み込まない
+    const base = createEmptyPages(initialCertType);
     if (!restoredSession) return base;
 
     return base.map((page, index) => {
@@ -281,6 +288,8 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
 
   const nextPath = routes.importPage;
   const currentPage = pages[activePageIndex];
+  // 選択中の種別のページ数（adult / child / mobility = 8、tsusho = 7）
+  const pageCount = getPageCount(selectedCertType);
   const currentPageTitle = getPageTitle(selectedCertType, activePageIndex);
   const currentCertType = CERT_TYPES.find((type) => type.id === selectedCertType) || CERT_TYPES[0];
   // 画像は確定保存時まで一切アップロードしないため、「取込済み」の判定は
@@ -288,6 +297,39 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
   // Fileはスマホ撮影への往復やページ再読み込みでReactのstateからは失われるが、
   // IndexedDB（importImageStore）へ退避しておき、下の復元effectで戻す。
   const completedCount = pages.filter((page) => !!page.selectedFile).length;
+
+  // 受給者証の種別の変更（ユーザー操作）。
+  // 様式の系統が変わる（ページ数・formData のキーの意味が変わる）場合は、ブラウザ上の未保存の
+  // 取込内容（画像・OCR結果・入力）を破棄し、新しい種別のページ数で作り直す。
+  // 前の種別の8ページ目や、前の様式の氏名などを引き継がないため。
+  // Firestore / Storage の保存済みデータには触れない。adult ⇔ child は従来どおり取込内容を保持する。
+  const changeCertType = (next: CertTypeId) => {
+    if (next === selectedCertType) return;
+
+    if (shouldResetPagesOnCertTypeChange(selectedCertType, next)) {
+      const hasWork = pagesRef.current.some(
+        (page) => !!page.selectedFile || !!page.ocrText || Object.values(page.formData).some(Boolean)
+      );
+      if (
+        hasWork &&
+        !window.confirm("受給者証の種類を変更すると、取り込んだ画像と読み取った内容は消えます。変更しますか？")
+      ) {
+        return;
+      }
+
+      pagesRef.current.forEach((page) => {
+        if (page.previewUrl.startsWith("blob:")) URL.revokeObjectURL(page.previewUrl);
+      });
+      setPages(pagesAfterCertTypeChange(pagesRef.current, selectedCertType, next));
+      setActivePageIndex(0);
+      setStatus("");
+      setOcrError(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      void clearPageImages(tenantId);
+    }
+
+    setSelectedCertType(next);
+  };
 
   const updateCurrentPage = (updater: (page: CertPage) => CertPage) => {
     setPages((prev) =>
@@ -359,9 +401,12 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
         setTargetBeneficiary(record);
         // 取込を新しく始めた場合は、現在の受給者証と同じ種別を初期選択にする
         // （管理Web／LINE のそれぞれで選択できない種別＝非公開の種別は初期選択にしない）
+        // 初期化のための切り替えなので、取込内容を破棄する必要がある（様式の系統が変わる）場合は切り替えない
         const sameType = CERT_TYPES.find((t) => t.id === record.certType);
         if (!restoredSession && sameType && isCertTypeSelectable(sameType.id, variant)) {
-          setSelectedCertType(sameType.id);
+          setSelectedCertType((current) =>
+            shouldResetPagesOnCertTypeChange(current, sameType.id) ? current : sameType.id
+          );
         }
       })
       .catch(() => {
@@ -579,7 +624,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
     });
 
     setStatus(
-      `✅ ${activePageIndex + 1}/${PAGE_COUNT} の画像を選択しました。内容を確認して「取込開始」を押してください。`
+      `✅ ${activePageIndex + 1}/${pageCount} の画像を選択しました。内容を確認して「取込開始」を押してください。`
     );
     return finalFile;
   };
@@ -615,7 +660,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
 
     setBusy(true);
     setOcrError(null);
-    setStatus(`${activePageIndex + 1}/${PAGE_COUNT} をOCR中...`);
+    setStatus(`${activePageIndex + 1}/${pageCount} をOCR中...`);
 
     updateCurrentPage((page) => ({
       ...page,
@@ -657,8 +702,8 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
 
       setStatus(
         text
-          ? `✅ ${activePageIndex + 1}/${PAGE_COUNT} のOCRが完了しました`
-          : `⚠️ ${activePageIndex + 1}/${PAGE_COUNT} のOCR結果が空でした`
+          ? `✅ ${activePageIndex + 1}/${pageCount} のOCRが完了しました`
+          : `⚠️ ${activePageIndex + 1}/${pageCount} のOCR結果が空でした`
       );
     } catch (e: unknown) {
       setOcrError(e);
@@ -751,7 +796,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
       setSaved(true);
 
       setSaveMessage("✅ 保存しました。利用者詳細を表示します...");
-      setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
+      setPages(createEmptyPages(selectedCertType));
       setActivePageIndex(0);
       setStatus("");
       setFlowStep("selectMode");
@@ -800,7 +845,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
         }
         targetLoading={!!targetBeneficiaryId && !targetBeneficiary}
         certType={selectedCertType}
-        onChangeCertType={setSelectedCertType}
+        onChangeCertType={changeCertType}
         pages={pages}
         activePageIndex={activePageIndex}
         onChangePage={setActivePageIndex}
@@ -862,7 +907,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
               // Storageパスに画像を保存する。
               clearImportSession(tenantId);
               void clearPageImages(tenantId);
-              setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
+              setPages(createEmptyPages(selectedCertType));
               setTargetBeneficiaryId("");
               setTargetBeneficiary(null);
               setBeneficiaryId(reserveBeneficiaryId(tenantId));
@@ -934,7 +979,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
                   disabled={disabled}
                   onClick={() => {
                     if (disabled) return;
-                    setSelectedCertType(type.id);
+                    changeCertType(type.id);
                   }}
                   className={`rounded-2xl border px-4 py-3 text-left transition ${type.themeClass} ${
                     active ? "cert-type-active shadow-sm" : "opacity-70 hover:opacity-100"
@@ -970,7 +1015,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
             <button
               type="button"
               onClick={() => {
-                setPages(Array.from({ length: PAGE_COUNT }, () => createEmptyPage()));
+                setPages(createEmptyPages(selectedCertType));
                 setStatus("");
                 clearImportSession(tenantId);
                 void clearPageImages(tenantId);
@@ -989,12 +1034,12 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
 
             <div>
               <div className="mb-1 text-sm font-semibold">
-                {completedCount} / {PAGE_COUNT} ページ取込済み
+                {completedCount} / {pageCount} ページ取込済み
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-zinc-200">
                 <div
                   className={`h-full rounded-full transition-all ${currentCertType.themeClass}`}
-                  style={{ width: `${(completedCount / PAGE_COUNT) * 100}%` }}
+                  style={{ width: `${(completedCount / pageCount) * 100}%` }}
                 />
               </div>
             </div>
@@ -1014,14 +1059,14 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
           <div className="mb-3 rounded-xl bg-zinc-50 px-3 py-2">
             <div className="text-xs opacity-60">現在のページ</div>
             <div className="text-sm font-semibold break-words">
-              {activePageIndex + 1}/8：{currentPageTitle}
+              {activePageIndex + 1}/{pageCount}：{currentPageTitle}
             </div>
           </div>
 
           <div id="upload-section" className="mt-5 grid gap-4 md:grid-cols-2 w-full max-w-full min-w-0">
             <div className="min-w-0 rounded-2xl border p-5">
               <div className="text-sm font-semibold">
-                受給者証画像（{activePageIndex + 1}/8）
+                受給者証画像（{activePageIndex + 1}/{pageCount}）
               </div>
               <div className="mt-1 text-xs opacity-70">
                 {currentPageTitle} の画像を登録します
@@ -1118,7 +1163,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
               {currentPage.previewUrl && (
                 <div className="mt-4">
                   <div className="text-xs opacity-70">
-                    サムネイル（{activePageIndex + 1}/8）
+                    サムネイル（{activePageIndex + 1}/{pageCount}）
                   </div>
                   <img
                     src={currentPage.previewUrl}
@@ -1131,7 +1176,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
 
             <div className="min-w-0 rounded-2xl border p-5">
               <div className="text-sm font-semibold">
-                受給者証取込 結果（{activePageIndex + 1}/8）
+                受給者証取込 結果（{activePageIndex + 1}/{pageCount}）
               </div>
               <div className="mt-1 text-xs opacity-70">
                 {currentPageTitle} のレイアウトに合わせて表示
@@ -1160,15 +1205,15 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
             </button>
 
             <div className="text-xs opacity-70">
-              現在 {activePageIndex + 1} / {PAGE_COUNT} ： {currentPageTitle}
+              現在 {activePageIndex + 1} / {pageCount} ： {currentPageTitle}
             </div>
 
             <button
               type="button"
               onClick={() =>
-                setActivePageIndex((prev) => Math.min(PAGE_COUNT - 1, prev + 1))
+                setActivePageIndex((prev) => Math.min(pageCount - 1, prev + 1))
               }
-              disabled={activePageIndex === PAGE_COUNT - 1}
+              disabled={activePageIndex === pageCount - 1}
               className="rounded-xl border px-4 py-2 text-sm disabled:opacity-50"
             >
               次のページ
@@ -1181,7 +1226,7 @@ export default function CertImportFlow({ tenantId, variant = "admin" }: Props) {
             <div>
               <div className="text-sm font-semibold">③内容を確認して保存</div>
               <div className="mt-1 text-xs opacity-70">
-                {completedCount} / {PAGE_COUNT} ページ取込済み。取り込んだ内容を確定してFirestoreに保存します。
+                {completedCount} / {pageCount} ページ取込済み。取り込んだ内容を確定してFirestoreに保存します。
               </div>
             </div>
 

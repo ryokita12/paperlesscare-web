@@ -14,7 +14,11 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CERT_TYPES, PAGE_COUNT } from "../../app/t/[tenantId]/constants/certPages.ts";
+import {
+  CERT_TYPES,
+  getPageCount,
+  PAGE_COUNT,
+} from "../../app/t/[tenantId]/constants/certPages.ts";
 
 const SRC_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const REPO_DIR = fileURLToPath(new URL("../../../", import.meta.url));
@@ -83,8 +87,28 @@ test("境界：currentCertificateId は単一のまま（currentCertificateIds �
   assert.deepEqual(offenders, []);
 });
 
-test("境界：画面のページ数（PAGE_COUNT）は 8 のまま", () => {
+// 【Phase 1-B4 で意図的に更新】
+// 以前は「画面のページ数は PAGE_COUNT = 8 のまま」を固定していた。
+// Phase 1-B4 でページ数を種別ごと（getPageCount）にしたため、境界を次のように更新した：
+//   - PAGE_COUNT は種別不明時の既定値として 8 のまま残る
+//   - tsusho は 7 ページ、mobility / adult / child は 8 ページ
+//   - 取込・LINE・受給者証タブの画面コードは PAGE_COUNT を使わない（種別のページ数を使う）
+test("境界：ページ数は種別ごと（tsusho = 7、それ以外 = 8）。PAGE_COUNT は既定値 8 として残る", () => {
   assert.equal(PAGE_COUNT, 8);
+  assert.equal(getPageCount("tsusho"), 7);
+  for (const certType of ["mobility", "adult", "child"]) {
+    assert.equal(getPageCount(certType), 8, certType);
+  }
+});
+
+test("境界：取込・LINE・受給者証タブの画面コードは固定の PAGE_COUNT を使っていない", () => {
+  for (const file of [
+    "src/app/t/[tenantId]/CertImportFlow.tsx",
+    "src/app/line/import/LineCertImportView.tsx",
+    "src/app/t/[tenantId]/beneficiaries/[beneficiaryId]/chart/CertificatesPanel.tsx",
+  ]) {
+    assert.equal(/\bPAGE_COUNT\b/.test(read(file)), false, file);
+  }
 });
 
 test("境界：管理Web・LINE の種別選択は、公開可能な種別だけを出す関数を通している", () => {

@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { CertPage } from "@/app/t/[tenantId]/types/cert";
 import {
-  PAGE_COUNT,
+  getPageCount,
   getPageDefinitions,
   lineCertTypeOptions,
   type CertTypeId,
@@ -132,7 +132,9 @@ export default function LineCertImportView(props: LineCertImportViewProps) {
   const pageDef = pageDefs[activePageIndex];
   const capturedCount = pages.filter(hasImage).length;
   const working = busy || compressing;
-  const isLast = activePageIndex === PAGE_COUNT - 1;
+  // 種別ごとのページ数（adult / child = 8。LINE では tsusho は選べない）
+  const pageCount = getPageCount(certType);
+  const isLast = activePageIndex === pageCount - 1;
   const firstPage = pages[0]?.formData;
   const ocrName = firstPage?.name ?? "";
   const mismatch = isExisting && isNameMismatch(target.name, ocrName);
@@ -326,7 +328,7 @@ export default function LineCertImportView(props: LineCertImportViewProps) {
           <div className="py-3">
             <div className="text-sm text-zinc-500">撮影したページ</div>
             <div className="mt-0.5 text-[1.05rem] font-semibold">
-              {capturedCount} / {PAGE_COUNT} ページ
+              {capturedCount} / {pageCount} ページ
             </div>
           </div>
         </div>
@@ -375,7 +377,7 @@ export default function LineCertImportView(props: LineCertImportViewProps) {
         {targetBadge}
         <div className="px-1">
           <div className="text-base font-semibold text-emerald-700">
-            {activePageIndex + 1} / {PAGE_COUNT} ページ目
+            {activePageIndex + 1} / {pageCount} ページ目
           </div>
           <h1 className="mt-0.5 text-[1.5rem] font-bold leading-snug">{pageDef?.shortTitle ?? `ページ${activePageIndex + 1}`}</h1>
         </div>

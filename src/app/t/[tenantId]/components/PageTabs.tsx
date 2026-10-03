@@ -86,11 +86,12 @@ export default function PageTabs({
 
         <div className="rounded-2xl bg-zinc-100 p-3">
           <div className="mb-2 text-center text-xs font-semibold text-zinc-500">
-            下段（5〜8ページ）
+            {/* ページ数は種別ごとに異なる（adult / child / mobility = 8、tsusho = 7） */}
+            下段（5〜{pages.length}ページ）
           </div>
 
           <div className="grid grid-cols-4 justify-items-center gap-3">
-            {pages.slice(4, 8).map((page, index) =>
+            {pages.slice(4).map((page, index) =>
               renderPageButton(page, index + 4)
             )}
           </div>

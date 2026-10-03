@@ -29,7 +29,8 @@ export type CertLayoutId =
   | "tsushoConsultation" // 四面：障害児相談支援給付費の支給内容
   | "tsushoBurden" // 五面：利用者負担に関する事項
   | "tsushoProvider6" // 六面：障害児通所支援事業者記入欄（項目の読み取りは未対応）
-  | "tsushoProvider7"; // 七面：同
+  | "tsushoProvider7" // 七面：同
+  | "unavailablePage"; // その種別に存在しないページ（範囲外）。入力欄を出さない
 
 // ページ7・8はいずれも「利用者負担に関する事項」で同一レイアウトを使う。
 const ADULT_LAYOUT_IDS: readonly CertLayoutId[] = [
@@ -105,14 +106,28 @@ export function hasContactInfoRow(layoutId: CertLayoutId): boolean {
 const FALLBACK_LAYOUT_ID: CertLayoutId =
   ADULT_LAYOUT_IDS[ADULT_LAYOUT_IDS.length - 1];
 
+// 範囲外のページ番号に対するレイアウト。
+// mobility / adult / child は従来どおり adult の最終ページ（userBurden）。
+// tsusho は存在しないページ（8ページ目等）を adult の帳票として表示しないよう、
+// 「このページはありません」とだけ表示するレイアウトにする。
+const OUT_OF_RANGE_LAYOUT_ID: Record<CertTypeId, CertLayoutId> = {
+  mobility: FALLBACK_LAYOUT_ID,
+  adult: FALLBACK_LAYOUT_ID,
+  child: FALLBACK_LAYOUT_ID,
+  tsusho: "unavailablePage",
+};
+
 /**
  * 受給者証種別とページ番号（0始まり）から、使用する帳票レイアウトのIDを返す。
- * 未知の種別・範囲外のページは adult の定義へフォールバックする。
+ * 未知の種別は adult の定義へフォールバックする。
+ * 範囲外のページは OUT_OF_RANGE_LAYOUT_ID（tsusho は unavailablePage）。
  */
 export function getCertLayoutId(
   certType: CertTypeId,
   pageIndex: number
 ): CertLayoutId {
-  const layoutIds = CERT_LAYOUT_IDS[certType] ?? ADULT_LAYOUT_IDS;
-  return layoutIds[pageIndex] ?? FALLBACK_LAYOUT_ID;
+  const known = Object.prototype.hasOwnProperty.call(CERT_LAYOUT_IDS, certType);
+  const layoutIds = known ? CERT_LAYOUT_IDS[certType] : ADULT_LAYOUT_IDS;
+  const outOfRange = known ? OUT_OF_RANGE_LAYOUT_ID[certType] : FALLBACK_LAYOUT_ID;
+  return layoutIds[pageIndex] ?? outOfRange;
 }

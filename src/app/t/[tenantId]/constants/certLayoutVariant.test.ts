@@ -174,11 +174,16 @@ test("page8: page1 のレイアウトへ誤って解決されない", () => {
   }
 });
 
+// 【Phase 1-B4 で意図的に更新】
+// 以前は全種別で範囲外 → userBurden を固定していた。tsusho（通所受給者証・7ページ）は
+// 範囲外（8ページ目等）で adult の帳票を表示しないよう unavailablePage を返すように変えた。
+// mobility / adult / child は従来どおり userBurden のまま。
 test("page8: 範囲外ページでも例外を投げず、別ページのレイアウトへ流れない", () => {
   for (const certType of CERT_TYPES) {
     for (const pageIndex of [-1, PAGE_COUNT, 99]) {
       const layoutId = getCertLayoutId(certType.id, pageIndex);
-      assert.equal(layoutId, "userBurden", `${certType.id} / ${pageIndex}`);
+      const expected = certType.id === "tsusho" ? "unavailablePage" : "userBurden";
+      assert.equal(layoutId, expected, `${certType.id} / ${pageIndex}`);
     }
   }
 });

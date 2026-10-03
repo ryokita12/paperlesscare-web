@@ -748,6 +748,16 @@ function LayoutType7({ pageTitle, page, onChangeField }: LayoutProps) {
   );
 }
 
+// その種別に存在しないページ（通所受給者証の8ページ目など）。別の様式の帳票を誤って表示しないよう、入力欄を出さない。
+function UnavailablePageLayout({ pageTitle }: LayoutProps) {
+  return (
+    <div className="min-w-full border cert-table">
+      <div className="border-b cert-title">{pageTitle}</div>
+      <div className="cert-cell text-sm text-zinc-600">このページはありません。</div>
+    </div>
+  );
+}
+
 // レイアウトIDから実際のコンポーネントへの対応。
 // 「どの種別のどのページがどのIDを使うか」は constants/certLayoutMap.ts が持つ。
 const LAYOUT_COMPONENTS: Record<CertLayoutId, CertLayout> = {
@@ -767,6 +777,7 @@ const LAYOUT_COMPONENTS: Record<CertLayoutId, CertLayout> = {
   tsushoBurden: TsushoBurdenLayout,
   tsushoProvider6: TsushoProviderLayout,
   tsushoProvider7: TsushoProviderLayout,
+  unavailablePage: UnavailablePageLayout,
 };
 
 /**

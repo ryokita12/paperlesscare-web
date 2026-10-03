@@ -19,9 +19,10 @@ import {
 } from "../../../lib/firestore/beneficiaries";
 import {
   CERT_TYPES,
-  PAGE_COUNT,
+  getPageCount,
   getPageDefinitions,
   getPageTitle,
+  padPagesForCertType,
   emptyFormData,
   type CertTypeId,
 } from "../../../constants/certPages";
@@ -31,24 +32,20 @@ import CertImageViewer from "../CertImageViewer";
 import EditPageSwitcher from "../EditPageSwitcher";
 import CertificateHighlightsCard from "./CertificateHighlightsCard";
 
-// 8ページに満たない旧データ（今回の修正前に登録された受給者など）を、
-// 画像なし・項目未取得の空ページで補って常にPAGE_COUNT件になるようにする。
+// ページ数に満たない旧データ（今回の修正前に登録された受給者など）を、
+// 画像なし・項目未取得の空ページで補って、常にその種別のページ数（getPageCount）件にする。
+// 種別が無い・未知の旧データは従来どおり 8 ページ。tsusho は 7 ページ（8ページ目は持たない）。
 function padPages(
   pages: SavedCertPage[],
   certType: CertTypeId
 ): SavedCertPage[] {
-  return Array.from({ length: PAGE_COUNT }, (_, index) => {
-    const existing = pages[index];
-    if (existing) return existing;
-
-    return {
-      pageNo: index + 1,
-      title: getPageDefinitions(certType)[index]?.title || `ページ ${index + 1}`,
-      formData: emptyFormData(),
-      ocrText: "",
-      storagePath: "",
-    };
-  });
+  return padPagesForCertType(pages, certType, (index) => ({
+    pageNo: index + 1,
+    title: getPageDefinitions(certType)[index]?.title || `ページ ${index + 1}`,
+    formData: emptyFormData(),
+    ocrText: "",
+    storagePath: "",
+  }));
 }
 
 function certTypeLabel(certType: string | null) {
@@ -399,7 +396,7 @@ export default function CertificatesPanel({ tenantId, beneficiaryId, onDirtyChan
                   {readOnly ? "過去の受給者証" : "現在の受給者証"}：{certTypeLabel(selectedCertificate.certType)}
                 </div>
                 <div className="text-sm font-semibold break-words">
-                  {activePageIndex + 1}/{PAGE_COUNT}：
+                  {activePageIndex + 1}/{getPageCount(selectedCertificate.certType)}：
                   {getPageTitle(selectedCertificate.certType, activePageIndex)}
                 </div>
               </div>
