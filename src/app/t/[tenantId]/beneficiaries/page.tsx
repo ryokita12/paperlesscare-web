@@ -4,6 +4,7 @@
 // 「誰なのか」（氏名・フリガナ・年齢・学年）と「受給者証は大丈夫か」（状態・有効期限）を一覧で確認し、
 // 利用者カルテへ移動する。検索は事業所の利用者を全件読み込んだうえで画面内で絞り込む
 // （1事業所あたり数十〜百件程度の想定。検索用のインデックスや外部サービスは使わない）。
+// Phase 1-C：利用者ごとの「要対応」の件数を表示し、要対応のある利用者だけに絞り込める。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useRequireAuth } from "@/lib/auth";
@@ -18,7 +19,8 @@ import {
   type CertificateStatus,
   type CertificateStatusKind,
 } from "@/lib/beneficiaryChart/certificateStatus";
-import { formatJapaneseDate, toLocalIsoDate } from "@/lib/beneficiaryChart/dates";
+import { formatJapaneseDate, toJapanIsoDate } from "@/lib/beneficiaryChart/dates";
+import { computeActionItems, type ActionItem } from "@/lib/beneficiaryChart/actionItems";
 import {
   matchesChartSearch,
   resolveChartIdentity,
@@ -27,6 +29,7 @@ import {
 } from "@/lib/beneficiaryChart/model";
 import { friendlyChartError } from "@/lib/beneficiaryChart/errors";
 import {
+  ActionCountBadge,
   CertificateStatusBadge,
   FormField,
   inputClass,
@@ -37,7 +40,17 @@ import {
 type ListRow = BeneficiaryChartRow & {
   identity: ChartIdentity;
   certStatus: CertificateStatus;
+  actionItems: ActionItem[];
 };
+
+function hasUrgent(row: ListRow): boolean {
+  return row.actionItems.some((i) => i.severity === "urgent");
+}
+
+/** 要対応の内容（一覧のツールチップ・読み上げ用） */
+function actionSummary(row: ListRow): string {
+  return row.actionItems.map((i) => i.message).join("／");
+}
 
 const STATUS_FILTERS: { id: "" | CertificateStatusKind; label: string }[] = [
   { id: "", label: "すべて" },
@@ -78,6 +91,7 @@ export default function BeneficiariesPage() {
   const [error, setError] = useState("");
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | CertificateStatusKind>("");
+  const [onlyActionRequired, setOnlyActionRequired] = useState(false);
   const [today] = useState(() => new Date());
 
   // 受給者証なしで利用者（枠）だけを作成するフォーム（既存の createBeneficiaryWithoutCertificate を使う）
@@ -105,7 +119,7 @@ export default function BeneficiariesPage() {
   }, [user, tenantId, load]);
 
   const listRows: ListRow[] = useMemo(() => {
-    const todayIso = toLocalIsoDate(today);
+    const todayIso = toJapanIsoDate(today);
     return (rows ?? []).map((row) => ({
       ...row,
       identity: resolveChartIdentity(row.record, row.sections, today),
@@ -114,6 +128,15 @@ export default function BeneficiariesPage() {
         validTo: row.currentCertificate?.validTo,
         today: todayIso,
       }),
+      actionItems: computeActionItems({
+        today: todayIso,
+        usageStatus: row.sections.personal.usageStatus,
+        certificate: row.currentCertificate,
+        documents: row.documents,
+        chartReview: row.currentCertificate
+          ? { certificateId: row.currentCertificate.certificateId, pendingCount: row.currentCertificate.pendingReviewCount }
+          : null,
+      }),
     }));
   }, [rows, today]);
 
@@ -121,10 +144,22 @@ export default function BeneficiariesPage() {
     () =>
       listRows.filter(
         (row) =>
-          matchesChartSearch(row, keyword) && (!statusFilter || row.certStatus.kind === statusFilter)
+          matchesChartSearch(row, keyword) &&
+          (!statusFilter || row.certStatus.kind === statusFilter) &&
+          (!onlyActionRequired || row.actionItems.length > 0)
       ),
-    [listRows, keyword, statusFilter]
+    [listRows, keyword, statusFilter, onlyActionRequired]
   );
+  // 要対応のある利用者の数と、その内訳（受給者証の期限切れ・期限間近。利用終了の利用者は含めない）
+  const actionSummaryCounts = useMemo(() => {
+    const has = (row: ListRow, type: string) => row.actionItems.some((i) => i.type === type);
+    return {
+      total: listRows.filter((row) => row.actionItems.length > 0).length,
+      expired: listRows.filter((row) => has(row, "certificateExpired")).length,
+      expiringSoon: listRows.filter((row) => has(row, "certificateExpiringSoon")).length,
+    };
+  }, [listRows]);
+  const actionRequiredCount = actionSummaryCounts.total;
 
   const counts = useMemo(() => {
     const c: Partial<Record<CertificateStatusKind, number>> = {};
@@ -178,8 +213,6 @@ export default function BeneficiariesPage() {
       </div>
     );
   }
-
-  const alertCount = (counts.expired ?? 0) + (counts.expiringSoon ?? 0);
 
   return (
     <div className="space-y-5 overflow-x-hidden">
@@ -250,21 +283,22 @@ export default function BeneficiariesPage() {
         </section>
       )}
 
-      {alertCount > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          受給者証の確認が必要な利用者がいます（期限切れ {counts.expired ?? 0}名・期限間近 {counts.expiringSoon ?? 0}名）。
-          <button
-            type="button"
-            className="ml-2 font-semibold underline"
-            onClick={() => setStatusFilter(counts.expired ? "expired" : "expiringSoon")}
-          >
-            表示する
-          </button>
+      {actionRequiredCount > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" data-testid="action-banner">
+          要対応のある利用者が {actionRequiredCount}名います
+          {actionSummaryCounts.expired + actionSummaryCounts.expiringSoon > 0 &&
+            `（受給者証の期限切れ ${actionSummaryCounts.expired}名・期限間近 ${actionSummaryCounts.expiringSoon}名を含む）`}
+          。
+          {!onlyActionRequired && (
+            <button type="button" className="ml-2 font-semibold underline" onClick={() => setOnlyActionRequired(true)}>
+              要対応のある利用者だけ表示
+            </button>
+          )}
         </div>
       )}
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
+        <div className="grid gap-3 sm:grid-cols-[1fr_200px_200px]">
           <FormField label="検索（氏名・フリガナ・受給者証番号）" htmlFor="chart-search">
             <input
               id="chart-search"
@@ -290,6 +324,17 @@ export default function BeneficiariesPage() {
               ))}
             </select>
           </FormField>
+          <FormField label="要対応" htmlFor="chart-action">
+            <select
+              id="chart-action"
+              className={inputClass}
+              value={onlyActionRequired ? "required" : ""}
+              onChange={(e) => setOnlyActionRequired(e.target.value === "required")}
+            >
+              <option value="">すべて</option>
+              <option value="required">要対応ありのみ（{actionRequiredCount}）</option>
+            </select>
+          </FormField>
         </div>
       </section>
 
@@ -297,7 +342,9 @@ export default function BeneficiariesPage() {
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-base font-bold">利用者一覧</h2>
           <div className="text-sm text-zinc-500">
-            {keyword || statusFilter ? `${filtered.length}件 / 全${listRows.length}件` : `${listRows.length}件`}
+            {keyword || statusFilter || onlyActionRequired
+              ? `${filtered.length}件 / 全${listRows.length}件`
+              : `${listRows.length}件`}
           </div>
         </div>
 
@@ -330,6 +377,7 @@ export default function BeneficiariesPage() {
                 <thead>
                   <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500">
                     <th className="px-3 py-2 font-semibold">氏名</th>
+                    <th className="px-3 py-2 font-semibold whitespace-nowrap">要対応</th>
                     <th className="px-3 py-2 font-semibold">フリガナ</th>
                     <th className="px-3 py-2 font-semibold whitespace-nowrap">年齢</th>
                     <th className="px-3 py-2 font-semibold whitespace-nowrap">学年</th>
@@ -360,6 +408,9 @@ export default function BeneficiariesPage() {
                             {usageStatusLabel(row)}
                           </span>
                         )}
+                      </td>
+                      <td className="px-3 py-3" title={actionSummary(row) || undefined}>
+                        <ActionCountBadge count={row.actionItems.length} urgent={hasUrgent(row)} />
                       </td>
                       <td className="px-3 py-3 text-zinc-600">
                         <Muted text={row.identity.furigana} />
@@ -406,6 +457,12 @@ export default function BeneficiariesPage() {
                           .filter(Boolean)
                           .join("・") || "年齢・期限 未登録"}
                       </div>
+                      {row.actionItems.length > 0 && (
+                        <div className="mt-1 flex min-w-0 items-center gap-2">
+                          <ActionCountBadge count={row.actionItems.length} urgent={hasUrgent(row)} />
+                          <span className="truncate text-xs text-zinc-600">{row.actionItems[0].message}</span>
+                        </div>
+                      )}
                     </div>
                     <CertificateStatusBadge kind={row.certStatus.kind} label={row.certStatus.label} />
                   </button>

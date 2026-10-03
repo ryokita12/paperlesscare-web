@@ -1,6 +1,7 @@
 "use client";
 
-// 利用者カルテのタブ。主要4タブ＋開発中の機能（押せない表示）
+// 利用者カルテのタブ。主要タブ＋開発中の機能（押せない表示）
+// Phase 1-C：「変更履歴」を追加
 import { PlannedBadge } from "../../components/chartUi";
 
 export const CHART_TABS = [
@@ -8,6 +9,7 @@ export const CHART_TABS = [
   { id: "certificates", label: "受給者証" },
   { id: "contract", label: "契約・関係先" },
   { id: "documents", label: "書類" },
+  { id: "history", label: "変更履歴" },
 ] as const;
 
 export type ChartTabId = (typeof CHART_TABS)[number]["id"];

@@ -6,6 +6,7 @@
 //
 // 受給者証は既存の certificates を使い、documents には保存しない。
 // 種別・サイズ・形式の制約は firestore.rules / storage.rules にも同じ値で書いている。
+import { isIsoDate } from "./dates.ts";
 
 export type BeneficiaryDocumentType = "contract" | "importantMatters" | "privacyConsent" | "other";
 
@@ -88,3 +89,109 @@ export function formatFileSize(bytes: number): string {
 }
 
 export const DOCUMENT_NAME_MAX_LENGTH = 100;
+
+// ===== 提出管理（Phase 1-C） =====
+//
+// 書類docに次の項目を追加する（既存の書類docには無いことがある。書き換え・移行はしない）：
+//   status       … "submitted"（提出済み）| "notSubmitted"（未提出）
+//   submittedAt  … 提出日 "YYYY-MM-DD"（不明なら ""）
+//   memo         … メモ
+// ファイルの無い書類doc（紙で受け取って事業所で保管している等）も作れる。その場合 storagePath は "" ・ fileSize は 0。
+//
+// 既存の書類doc（status が無い）は「ファイルを登録した＝受け取った」として提出済みとみなす。
+
+export type DocumentSubmissionStatus = "submitted" | "notSubmitted";
+
+export const DOCUMENT_STATUS_OPTIONS: readonly { id: DocumentSubmissionStatus; label: string }[] = [
+  { id: "submitted", label: "提出済み" },
+  { id: "notSubmitted", label: "未提出" },
+];
+
+/** 利用者ごとに必ずそろえる書類（「その他」は一律の必須にしない） */
+export const REQUIRED_DOCUMENT_TYPES: readonly BeneficiaryDocumentType[] = [
+  "contract",
+  "importantMatters",
+  "privacyConsent",
+];
+
+export const DOCUMENT_MEMO_MAX_LENGTH = 500;
+
+export function isDocumentType(value: unknown): value is BeneficiaryDocumentType {
+  return DOCUMENT_TYPE_OPTIONS.some((o) => o.id === value);
+}
+
+/** 書類docの提出状態。status が無い既存データは、ファイルがあれば提出済み・無ければ未提出 */
+export function resolveDocumentStatus(raw: { status?: unknown; storagePath?: unknown }): DocumentSubmissionStatus {
+  if (raw.status === "submitted" || raw.status === "notSubmitted") return raw.status;
+  return typeof raw.storagePath === "string" && raw.storagePath ? "submitted" : "notSubmitted";
+}
+
+export type DocumentSubmissionInput = { type: string; status: DocumentSubmissionStatus };
+
+export type RequiredDocumentState = {
+  type: BeneficiaryDocumentType;
+  label: string;
+  submitted: boolean;
+  /** この種別で登録されている書類の件数（提出済み・未提出の両方） */
+  count: number;
+};
+
+/**
+ * 必要書類ごとの提出状況。同じ種別の書類が複数ある場合（再契約・差し替え等）は、
+ * 1件でも提出済みがあれば提出済みとする。
+ */
+export function summarizeRequiredDocuments(
+  documents: readonly DocumentSubmissionInput[]
+): RequiredDocumentState[] {
+  return REQUIRED_DOCUMENT_TYPES.map((type) => {
+    const items = documents.filter((d) => d.type === type);
+    return {
+      type,
+      label: documentTypeLabel(type),
+      submitted: items.some((d) => d.status === "submitted"),
+      count: items.length,
+    };
+  });
+}
+
+export type DocumentMetaInput = {
+  name: string;
+  status: DocumentSubmissionStatus;
+  submittedAt: string;
+  memo: string;
+};
+
+/** 書類の情報（ファイル以外）の入力チェック。today は "YYYY-MM-DD" */
+export function validateDocumentMeta(
+  meta: DocumentMetaInput,
+  today: string
+): Partial<Record<"name" | "submittedAt" | "memo", string>> {
+  const errors: Partial<Record<"name" | "submittedAt" | "memo", string>> = {};
+  if (meta.name.trim().length > DOCUMENT_NAME_MAX_LENGTH) {
+    errors.name = `書類名は${DOCUMENT_NAME_MAX_LENGTH}文字以内で入力してください`;
+  }
+  if (meta.submittedAt) {
+    if (!isIsoDate(meta.submittedAt)) {
+      errors.submittedAt = "日付が正しくありません";
+    } else if (meta.submittedAt > today) {
+      errors.submittedAt = "未来の日付は入力できません";
+    }
+  }
+  if (meta.memo.length > DOCUMENT_MEMO_MAX_LENGTH) {
+    errors.memo = `メモは${DOCUMENT_MEMO_MAX_LENGTH}文字以内で入力してください`;
+  }
+  return errors;
+}
+
+/**
+ * 保存する提出情報を整える。未提出にした場合、提出日は空にする（未提出なのに提出日が残らないように）。
+ */
+export function normalizeDocumentMeta(meta: DocumentMetaInput): DocumentMetaInput {
+  const status = meta.status === "submitted" ? "submitted" : "notSubmitted";
+  return {
+    name: meta.name.trim().slice(0, DOCUMENT_NAME_MAX_LENGTH),
+    status,
+    submittedAt: status === "submitted" ? meta.submittedAt.trim() : "",
+    memo: meta.memo.trim().slice(0, DOCUMENT_MEMO_MAX_LENGTH),
+  };
+}

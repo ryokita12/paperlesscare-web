@@ -32,6 +32,26 @@ export function CertificateStatusBadge({ kind, label }: { kind: CertificateStatu
   );
 }
 
+/**
+ * 利用者の「要対応」の件数（Phase 1-C）。至急（期限切れ等）を含む場合は赤、それ以外はオレンジ。
+ * 0件は目立たせない（一覧で対応が必要な利用者だけが目に入るように）。
+ */
+export function ActionCountBadge({ count, urgent }: { count: number; urgent: boolean }) {
+  if (count === 0) {
+    return <span className="whitespace-nowrap text-xs text-zinc-400">なし</span>;
+  }
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 py-0.5 text-xs font-bold ${
+        urgent ? "border-red-200 bg-red-50 text-red-700" : "border-amber-200 bg-amber-50 text-amber-800"
+      }`}
+      data-testid="action-count"
+    >
+      要対応 {count}
+    </span>
+  );
+}
+
 export function PlannedBadge() {
   return (
     <span className="ml-1 inline-flex shrink-0 items-center rounded-full border border-zinc-200 bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">

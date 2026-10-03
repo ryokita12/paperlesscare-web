@@ -76,9 +76,20 @@ type Props = {
   onDirtyChange?: (dirty: boolean) => void;
   // 受給者証の修正を保存したとき（カルテ上部の表示を最新にする）
   onSaved?: () => void;
+  // Phase 1-C：カルテ上部の「要対応」から反映候補へ移動してきたとき（値が変わるたびに確認カードへスクロールする）
+  reviewFocusKey?: number;
+  // Phase 1-C：反映候補の判断（反映しない）を記録したとき（要対応を最新にする）
+  onReviewRecorded?: () => void;
 };
 
-export default function CertificatesPanel({ tenantId, beneficiaryId, onDirtyChange, onSaved }: Props) {
+export default function CertificatesPanel({
+  tenantId,
+  beneficiaryId,
+  onDirtyChange,
+  onSaved,
+  reviewFocusKey,
+  onReviewRecorded,
+}: Props) {
   const router = useRouter();
   const { user, loading } = useRequireAuth();
 
@@ -332,6 +343,8 @@ export default function CertificatesPanel({ tenantId, beneficiaryId, onDirtyChan
           certificateId={reviewCertificate.id}
           user={user}
           onChartUpdated={onSaved}
+          onReviewRecorded={onReviewRecorded}
+          focusKey={reviewFocusKey}
         />
       )}
 

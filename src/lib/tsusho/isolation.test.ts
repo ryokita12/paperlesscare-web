@@ -105,10 +105,22 @@ test("境界：反映処理は summary / currentCertificateId / status / superse
   const start = store.indexOf("export async function applyCertificateReview");
   assert.ok(start > 0);
   const body = store.slice(start);
-  // 書き込みは tx.update の2か所だけ（利用者doc：カルテの項目＋updatedAt/By、証doc：chartReview）
-  assert.equal((body.match(/tx\.(update|set|delete)\(/g) ?? []).length, 2);
-  assert.match(body, /tx\.update\(benRef, \{ \.\.\.fieldUpdates, updatedBy: actor, updatedAt: serverTimestamp\(\) \}\)/);
+  // 書き込みは2か所だけ（利用者doc：カルテの項目＋updatedAt/By、証doc：chartReview）。
+  // 【Phase 1-C で意図的に更新】利用者doc の更新は、変更履歴（chartHistory）と一緒に書く writeChartUpdate 経由になった
+  assert.equal((body.match(/tx\.(update|set|delete)\(/g) ?? []).length, 1);
+  assert.equal((body.match(/writeChartUpdate\(\{/g) ?? []).length, 1);
+  assert.match(body, /writeChartUpdate\(\{[\s\S]*?update: fieldUpdates,[\s\S]*?source: "certificateReview",/);
   assert.match(body, /tx\.update\(certRef, reviewUpdates\)/);
+  // writeChartUpdate 自体の書き込みは、利用者doc（渡された更新内容＋updatedAt/By＋lastChartHistoryId）と変更履歴docだけ
+  const helperStart = store.indexOf("function writeChartUpdate");
+  const helper = store.slice(helperStart, store.indexOf("async function readBeneficiaryInTx"));
+  assert.ok(helperStart > 0);
+  assert.equal((helper.match(/tx\.(update|set|delete)\(/g) ?? []).length, 2);
+  assert.match(helper, /tx\.update\(benRef, \{/);
+  assert.match(helper, /tx\.set\(historyRef, \{/);
+  for (const key of ["summary", "currentCertificateId", "status:", "supersededBy", "certificateCount", "pages"]) {
+    assert.equal(helper.includes(key), false, `writeChartUpdate: ${key}`);
+  }
   // （pages は最新の証を読み直すためだけに使う。書き込み先は上の2か所に固定している）
   for (const key of ["summary", "currentCertificateId:", "status:", "supersededBy", "certificateCount"]) {
     assert.equal(body.includes(key), false, key);

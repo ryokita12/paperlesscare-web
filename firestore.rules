@@ -25,6 +25,9 @@ service cloud.firestore {
       //   - type は決められた4種類のみ（受給者証は certificates を使うため含めない）
       //   - storagePath はこの書類自身の Storage パス（tenants/{t}/recipients/{b}/documents/{d}/...）のみ
       //   - fileSize は 10MB 以下（storage.rules・アプリ側の上限と同じ）
+      // Phase 1-C：提出管理のため、ファイルの無い書類（storagePath == '' かつ fileSize == 0）と、
+      //   status（submitted / notSubmitted）・submittedAt（"YYYY-MM-DD" または ""）・memo（500文字以内）を追加。
+      //   これらの項目が無い既存の書類docも、従来どおり読み書きできる。
       match /documents/{documentId} {
         allow read, delete: if request.auth != null &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
@@ -32,10 +35,48 @@ service cloud.firestore {
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId &&
           request.resource.data.type in ['contract', 'importantMatters', 'privacyConsent', 'other'] &&
           request.resource.data.storagePath is string &&
-          request.resource.data.storagePath.matches(
-            'tenants/' + tenantId + '/recipients/' + beneficiaryId + '/documents/' + documentId + '/[^/]+') &&
           request.resource.data.fileSize is int &&
-          request.resource.data.fileSize <= 10 * 1024 * 1024;
+          (
+            (request.resource.data.storagePath.matches(
+              'tenants/' + tenantId + '/recipients/' + beneficiaryId + '/documents/' + documentId + '/[^/]+') &&
+              request.resource.data.fileSize <= 10 * 1024 * 1024) ||
+            (request.resource.data.storagePath == '' && request.resource.data.fileSize == 0)
+          ) &&
+          (!('status' in request.resource.data) ||
+            request.resource.data.status in ['submitted', 'notSubmitted']) &&
+          (!('submittedAt' in request.resource.data) ||
+            (request.resource.data.submittedAt is string &&
+              request.resource.data.submittedAt.matches('([0-9]{4}-[0-9]{2}-[0-9]{2})?'))) &&
+          (!('memo' in request.resource.data) ||
+            (request.resource.data.memo is string && request.resource.data.memo.size() <= 500));
+      }
+
+      // 利用者カルテの変更履歴（Phase 1-C）。1件 = カルテの保存1回で、実際に変わった項目（変更前・変更後）を持つ。
+      // 改ざん・捏造を防ぐため：
+      //   - 読み取りは同じテナントの所属者のみ。作成後の変更・削除は誰もできない（追記のみ）
+      //   - actor.uid は書き込んだ本人、createdAt はサーバー時刻（request.time）であること
+      //   - 同じ書き込み（トランザクション）で利用者doc も更新し、その lastChartHistoryId がこの履歴のIDであること
+      //     （カルテの更新を伴わない履歴だけを単独で作れない）
+      match /chartHistory/{historyId} {
+        allow read: if request.auth != null &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+        allow create: if request.auth != null &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId &&
+          request.resource.data.keys().hasOnly(
+            ['schemaVersion', 'beneficiaryId', 'source', 'sections', 'changes', 'certificateId', 'actor', 'createdAt']) &&
+          request.resource.data.beneficiaryId == beneficiaryId &&
+          request.resource.data.source in ['chartEdit', 'certificateReview'] &&
+          request.resource.data.changes is list &&
+          request.resource.data.changes.size() > 0 &&
+          request.resource.data.changes.size() <= 50 &&
+          request.resource.data.actor.uid == request.auth.uid &&
+          request.resource.data.actor.email == request.auth.token.get('email', null) &&
+          request.resource.data.createdAt == request.time &&
+          getAfter(/databases/$(database)/documents/tenants/$(tenantId)/beneficiaries/$(beneficiaryId))
+            .data.lastChartHistoryId == historyId &&
+          getAfter(/databases/$(database)/documents/tenants/$(tenantId)/beneficiaries/$(beneficiaryId))
+            .data.updatedAt == request.time;
+        allow update, delete: if false;
       }
     }
 

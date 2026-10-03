@@ -2,20 +2,27 @@
 //
 // 既存の利用者doc（tenants/{tenantId}/beneficiaries/{beneficiaryId}）を読み、
 // カルテの各マップ（personal / guardian / contract / school / consultationSupport）だけを
-// updateDoc で更新する。受給者証まわりのフィールド（summary / currentCertificateId /
+// 部分更新する。受給者証まわりのフィールド（summary / currentCertificateId /
 // certificateCount / certType / pages）には書き込まない。
 // Phase 1-B7 の受給者証の反映候補（applyCertificateReview）も同じで、証doc には chartReview だけを書く。
+//
+// Phase 1-C：カルテの値が変わる保存（編集・受給者証からの反映）では、同じトランザクションで
+// 変更履歴 chartHistory/{id} を1件作り、利用者doc の lastChartHistoryId にそのIDを入れる
+// （firestore.rules が「同じ書き込みで利用者doc も更新した履歴」だけを作成可能にするための目印）。
+// 値が1つも変わらない保存では履歴を作らない。
 import type { User } from "firebase/auth";
 import {
   collection,
   doc,
   getDoc,
   getDocs,
+  limit,
   orderBy,
   query,
   runTransaction,
   serverTimestamp,
-  updateDoc,
+  type DocumentReference,
+  type Transaction,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
@@ -40,6 +47,19 @@ import {
   type CertificateReviewCandidate,
   type ReviewTarget,
 } from "./certificateReview";
+import {
+  buildChartHistoryRecord,
+  CHART_HISTORY_COLLECTION,
+  diffFieldUpdates,
+  diffPersonalSave,
+  diffSectionSave,
+  readChartHistoryEntry,
+  type ChartHistoryChange,
+  type ChartHistoryEntry,
+  type ChartHistorySource,
+} from "./chartHistory";
+import type { DocumentSubmissionInput } from "./documents";
+import { listBeneficiaryDocuments } from "./documentsStore";
 
 export type BeneficiaryChart = {
   record: BeneficiaryRecord;
@@ -51,6 +71,8 @@ export type CurrentCertificateValidity = {
   certificateId: string;
   validFrom: string | null;
   validTo: string | null;
+  // Phase 1-C：カルテ反映候補（Phase 1-B7）のうち未確認の件数。tsusho 以外・旧データは 0
+  pendingReviewCount: number;
 };
 
 function beneficiaryRef(tenantId: string, beneficiaryId: string) {
@@ -74,44 +96,84 @@ export async function getBeneficiaryChart(
   return toChart(snap.id, snap.data());
 }
 
+function certificateRef(tenantId: string, beneficiaryId: string, certificateId: string) {
+  return doc(db, "tenants", tenantId, "beneficiaries", beneficiaryId, "certificates", certificateId);
+}
+
+function asPages(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
 /**
- * 現在の受給者証の有効期間を読む。受給者証が無い利用者は null。
+ * 現在の受給者証の有効期間（と、未確認のカルテ反映候補の件数）を読む。受給者証が無い利用者は null。
  * - 旧データ（利用者doc直下の受給者証）は既存と同じ extractValidity で求める
  * - 受給者証docが読めない場合も「受給者証はある・期限は不明」として扱い、画面を止めない
+ * - 反映候補の件数は、受給者証タブの確認カードと同じ buildCertificateReview で数える（sections が無ければ 0）
  */
 export async function getCurrentCertificateValidity(
   tenantId: string,
-  record: BeneficiaryRecord
+  record: BeneficiaryRecord,
+  sections?: BeneficiaryChartSections
 ): Promise<CurrentCertificateValidity | null> {
   if (record.hasLegacyCertificate) {
-    return { certificateId: "legacy", ...extractValidity(record.pages) };
+    return { certificateId: "legacy", ...extractValidity(record.pages), pendingReviewCount: 0 };
   }
   const certificateId = record.currentCertificateId;
   if (!certificateId) return null;
 
   try {
-    const snap = await getDoc(
-      doc(db, "tenants", tenantId, "beneficiaries", record.id, "certificates", certificateId)
-    );
+    const snap = await getDoc(certificateRef(tenantId, record.id, certificateId));
     const data = snap.exists() ? snap.data() : {};
     return {
       certificateId,
       validFrom: typeof data.validFrom === "string" ? data.validFrom : null,
       validTo: typeof data.validTo === "string" ? data.validTo : null,
+      pendingReviewCount: sections ? countPendingReview(record, sections, data) : 0,
     };
   } catch {
-    return { certificateId, validFrom: null, validTo: null };
+    return { certificateId, validFrom: null, validTo: null, pendingReviewCount: 0 };
+  }
+}
+
+function countPendingReview(
+  record: BeneficiaryRecord,
+  sections: BeneficiaryChartSections,
+  cert: Record<string, unknown>
+): number {
+  return buildCertificateReview({
+    certType: String(cert.certType ?? ""),
+    pages: asPages(cert.pages),
+    record,
+    sections,
+    chartReview: cert.chartReview,
+  }).candidates.length;
+}
+
+/**
+ * 書類の提出状態（要対応の判定用）。読み込めなかった場合は null（書類の要対応を出さないだけで、画面は止めない）。
+ */
+export async function getDocumentSubmissions(
+  tenantId: string,
+  beneficiaryId: string
+): Promise<DocumentSubmissionInput[] | null> {
+  try {
+    const docs = await listBeneficiaryDocuments(tenantId, beneficiaryId);
+    return docs.map((d) => ({ type: d.type, status: d.status }));
+  } catch {
+    return null;
   }
 }
 
 export type BeneficiaryChartRow = BeneficiaryChart & {
   currentCertificate: CurrentCertificateValidity | null;
+  // Phase 1-C：要対応の判定用（読み込めなかった場合は null）
+  documents: DocumentSubmissionInput[] | null;
 };
 
 /**
- * 利用者一覧（カルテの情報と、現在の受給者証の有効期間つき）。
+ * 利用者一覧（カルテの情報と、現在の受給者証の有効期間・書類の提出状態つき）。
  * 並び順・取得条件は既存の listBeneficiaries と同じ（updatedAt の新しい順）。
- * 1事業所あたりの利用者数（数十〜百件程度）を前提に、現在の受給者証は利用者ごとに1件ずつ読む。
+ * 1事業所あたりの利用者数（数十〜百件程度）を前提に、現在の受給者証と書類は利用者ごとに読む。
  */
 export async function listBeneficiaryChartRows(tenantId: string): Promise<BeneficiaryChartRow[]> {
   const snap = await getDocs(
@@ -119,11 +181,74 @@ export async function listBeneficiaryChartRows(tenantId: string): Promise<Benefi
   );
   const charts = snap.docs.map((d) => toChart(d.id, d.data()));
   return Promise.all(
-    charts.map(async (chart) => ({
-      ...chart,
-      currentCertificate: await getCurrentCertificateValidity(tenantId, chart.record),
-    }))
+    charts.map(async (chart) => {
+      const [currentCertificate, documents] = await Promise.all([
+        getCurrentCertificateValidity(tenantId, chart.record, chart.sections),
+        getDocumentSubmissions(tenantId, chart.record.id),
+      ]);
+      return { ...chart, currentCertificate, documents };
+    })
   );
+}
+
+// ===== カルテの変更履歴（Phase 1-C） =====
+
+function chartHistoryCollection(tenantId: string, beneficiaryId: string) {
+  return collection(db, "tenants", tenantId, "beneficiaries", beneficiaryId, CHART_HISTORY_COLLECTION);
+}
+
+/**
+ * 利用者doc の更新と、変更があれば変更履歴の作成を、同じトランザクションで行う。
+ * 変更が無い場合も利用者doc の更新（profile の写し・updatedAt 等）は従来どおり行い、履歴だけ作らない。
+ */
+function writeChartUpdate(params: {
+  tx: Transaction;
+  tenantId: string;
+  benRef: DocumentReference;
+  update: Record<string, unknown>;
+  changes: readonly ChartHistoryChange[];
+  source: ChartHistorySource;
+  certificateId?: string;
+  user: User;
+}) {
+  const { tx, tenantId, benRef, update, changes, source, certificateId, user } = params;
+  const historyRef = changes.length > 0 ? doc(chartHistoryCollection(tenantId, benRef.id)) : null;
+  tx.update(benRef, {
+    ...update,
+    updatedBy: actorOf(user),
+    updatedAt: serverTimestamp(),
+    ...(historyRef ? { lastChartHistoryId: historyRef.id } : {}),
+  });
+  if (historyRef) {
+    tx.set(historyRef, {
+      ...buildChartHistoryRecord({
+        beneficiaryId: benRef.id,
+        source,
+        changes,
+        certificateId,
+        actor: { uid: user.uid, email: user.email, displayName: user.displayName ?? "" },
+      }),
+      createdAt: serverTimestamp(),
+    });
+  }
+}
+
+async function readBeneficiaryInTx(tx: Transaction, benRef: DocumentReference) {
+  const snap = await tx.get(benRef);
+  if (!snap.exists()) throw new Error("利用者が見つかりません。画面を再読み込みしてください。");
+  return snap.data();
+}
+
+/** 変更履歴（新しい順）。max 件まで */
+export async function listChartHistory(
+  tenantId: string,
+  beneficiaryId: string,
+  max: number
+): Promise<ChartHistoryEntry[]> {
+  const snap = await getDocs(
+    query(chartHistoryCollection(tenantId, beneficiaryId), orderBy("createdAt", "desc"), limit(max))
+  );
+  return snap.docs.map((d) => readChartHistoryEntry(d.id, d.data({ serverTimestamps: "estimate" })));
 }
 
 /** 本人情報（＋手動の学年・既存画面向けの profile の写し）を保存する */
@@ -135,10 +260,20 @@ export async function saveChartPersonal(params: {
   user: User;
 }): Promise<void> {
   const { tenantId, record, personal, grade, user } = params;
-  await updateDoc(beneficiaryRef(tenantId, record.id), {
-    ...buildPersonalUpdate({ personal, grade, currentProfile: record.profile }),
-    updatedBy: actorOf(user),
-    updatedAt: serverTimestamp(),
+  const benRef = beneficiaryRef(tenantId, record.id);
+  await runTransaction(db, async (tx) => {
+    const raw = await readBeneficiaryInTx(tx, benRef);
+    // profile.birthday の引き継ぎは、画面の値ではなく保存直前に読み直した値を使う
+    const latest = normalizeBeneficiaryData(record.id, raw);
+    writeChartUpdate({
+      tx,
+      tenantId,
+      benRef,
+      update: buildPersonalUpdate({ personal, grade, currentProfile: latest.profile }),
+      changes: diffPersonalSave({ before: readChartSections(raw), personal, grade }),
+      source: "chartEdit",
+      user,
+    });
   });
 }
 
@@ -151,22 +286,22 @@ export async function saveChartSection<K extends Exclude<ChartSectionKey, "perso
   user: User;
 }): Promise<void> {
   const { tenantId, beneficiaryId, key, value, user } = params;
-  await updateDoc(beneficiaryRef(tenantId, beneficiaryId), {
-    ...buildSectionUpdate(key, value),
-    updatedBy: actorOf(user),
-    updatedAt: serverTimestamp(),
+  const benRef = beneficiaryRef(tenantId, beneficiaryId);
+  await runTransaction(db, async (tx) => {
+    const raw = await readBeneficiaryInTx(tx, benRef);
+    writeChartUpdate({
+      tx,
+      tenantId,
+      benRef,
+      update: buildSectionUpdate(key, value),
+      changes: diffSectionSave({ before: readChartSections(raw), key, value }),
+      source: "chartEdit",
+      user,
+    });
   });
 }
 
 // ===== 受給者証（tsusho）の内容をカルテへ反映する確認（Phase 1-B7） =====
-
-function certificateRef(tenantId: string, beneficiaryId: string, certificateId: string) {
-  return doc(db, "tenants", tenantId, "beneficiaries", beneficiaryId, "certificates", certificateId);
-}
-
-function asPages(value: unknown) {
-  return Array.isArray(value) ? value : [];
-}
 
 /**
  * 現在の受給者証と現在のカルテを読み、確認画面に出す反映候補を作る。
@@ -242,6 +377,7 @@ export async function applyCertificateReview(params: {
       throw new CertificateReviewOutdatedError();
     }
 
+    const sections = readChartSections(raw);
     const plan = planCertificateReview({
       shown,
       selected,
@@ -250,13 +386,23 @@ export async function applyCertificateReview(params: {
         certType: "tsusho",
         pages: asPages(cert.pages),
         record: normalizeBeneficiaryData(beneficiaryId, raw),
-        sections: readChartSections(raw),
+        sections,
       },
     });
 
+    // 利用者doc の更新（カルテの項目＋profile の写し）と変更履歴（Phase 1-C）は writeChartUpdate で行う
     const fieldUpdates = buildChartFieldUpdates(plan.applied);
     if (Object.keys(fieldUpdates).length > 0) {
-      tx.update(benRef, { ...fieldUpdates, updatedBy: actor, updatedAt: serverTimestamp() });
+      writeChartUpdate({
+        tx,
+        tenantId,
+        benRef,
+        update: fieldUpdates,
+        changes: diffFieldUpdates({ before: sections, updates: fieldUpdates }),
+        source: "certificateReview",
+        certificateId,
+        user,
+      });
     }
 
     const decisions = buildReviewDecisions(plan, selected);

@@ -2,18 +2,23 @@
 
 // 利用者カルテ（旧：利用者詳細）。URL は従来どおり /t/{tenantId}/beneficiaries/{beneficiaryId}。
 // 受給者証の取込・更新の保存後もこのURLへ戻ってくる（CertImportFlow は変更していない）。
-// タブは ?tab=basic|certificates|contract|documents で指定でき、省略時は「基本情報」。
+// タブは ?tab=basic|certificates|contract|documents|history で指定でき、省略時は「基本情報」。
+// Phase 1-C：上部に「要対応」（受給者証の期限・必要書類の未提出・カルテ反映候補の未確認）を表示し、
+// 各項目から該当するタブ・箇所へ移動できる（?focus=chartReview|{書類の種別} で移動先の箇所を指定）。
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useRequireAuth } from "@/lib/auth";
 import {
   getBeneficiaryChart,
   getCurrentCertificateValidity,
+  getDocumentSubmissions,
   type BeneficiaryChart,
   type CurrentCertificateValidity,
 } from "@/lib/beneficiaryChart/chartStore";
 import { getCertificateStatus } from "@/lib/beneficiaryChart/certificateStatus";
-import { toLocalIsoDate } from "@/lib/beneficiaryChart/dates";
+import { toJapanIsoDate } from "@/lib/beneficiaryChart/dates";
+import { computeActionItems, type ActionItemTarget } from "@/lib/beneficiaryChart/actionItems";
+import type { DocumentSubmissionInput } from "@/lib/beneficiaryChart/documents";
 import { resolveChartIdentity, USAGE_STATUS_OPTIONS } from "@/lib/beneficiaryChart/model";
 import { friendlyChartError } from "@/lib/beneficiaryChart/errors";
 import ChartHeader from "./chart/ChartHeader";
@@ -22,9 +27,14 @@ import BasicInfoTab from "./chart/BasicInfoTab";
 import ContractTab from "./chart/ContractTab";
 import DocumentsTab from "./chart/DocumentsTab";
 import CertificatesPanel from "./chart/CertificatesPanel";
+import ActionItemsPanel from "./chart/ActionItemsPanel";
+import ChartHistoryTab from "./chart/ChartHistoryTab";
 import { secondaryButtonClass } from "../components/chartUi";
 
 const LEAVE_CONFIRM = "保存していない入力があります。入力内容を破棄して移動しますか？";
+
+// 要対応から移動したときの、タブ内の移動先（key は移動のたびに変わる値。同じ箇所へ再度移動してもスクロールする）
+type FocusRequest = { focus: string; key: number } | null;
 
 function BeneficiaryChartPage() {
   const params = useParams<{ tenantId: string; beneficiaryId: string }>();
@@ -38,9 +48,14 @@ function BeneficiaryChartPage() {
   const [activeTab, setActiveTab] = useState<ChartTabId>(isChartTabId(tabParam) ? tabParam : "basic");
   const [chart, setChart] = useState<BeneficiaryChart | null>(null);
   const [currentCertificate, setCurrentCertificate] = useState<CurrentCertificateValidity | null>(null);
+  const [documentSubmissions, setDocumentSubmissions] = useState<DocumentSubmissionInput[] | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "notFound" | "error">("loading");
   const [loadError, setLoadError] = useState("");
   const [today] = useState(() => new Date());
+  const [focusRequest, setFocusRequest] = useState<FocusRequest>(() => {
+    const focus = searchParams.get("focus");
+    return focus && isChartTabId(tabParam) ? { focus, key: 1 } : null;
+  });
 
   // 編集中のカード（同時に1つだけ）と、受給者証タブの未保存の修正
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -53,9 +68,13 @@ function BeneficiaryChartPage() {
       setState("notFound");
       return;
     }
-    const cert = await getCurrentCertificateValidity(tenantId, next.record);
+    const [cert, documents] = await Promise.all([
+      getCurrentCertificateValidity(tenantId, next.record, next.sections),
+      getDocumentSubmissions(tenantId, beneficiaryId),
+    ]);
     setChart(next);
     setCurrentCertificate(cert);
+    setDocumentSubmissions(documents);
     setState("ready");
   }, [tenantId, beneficiaryId]);
 
@@ -80,17 +99,26 @@ function BeneficiaryChartPage() {
 
   const confirmLeave = () => !hasUnsavedChanges || window.confirm(LEAVE_CONFIRM);
 
-  const changeTab = (tab: ChartTabId) => {
-    if (tab === activeTab || !confirmLeave()) return;
-    setEditingId(null);
-    setCertificateDirty(false);
-    setActiveTab(tab);
+  const changeTab = (tab: ChartTabId, focus?: string) => {
+    if (tab !== activeTab) {
+      if (!confirmLeave()) return;
+      setEditingId(null);
+      setCertificateDirty(false);
+      setActiveTab(tab);
+    } else if (!focus) {
+      return;
+    }
+    setFocusRequest(focus ? { focus, key: Date.now() } : null);
     const qs = new URLSearchParams(searchParams.toString());
     if (tab === "basic") qs.delete("tab");
     else qs.set("tab", tab);
+    if (focus) qs.set("focus", focus);
+    else qs.delete("focus");
     const query = qs.toString();
     router.replace(`/t/${tenantId}/beneficiaries/${beneficiaryId}${query ? `?${query}` : ""}`, { scroll: false });
   };
+
+  const goToActionTarget = (target: ActionItemTarget) => changeTab(target.tab, target.focus);
 
   const goBack = () => {
     if (!confirmLeave()) return;
@@ -112,9 +140,24 @@ function BeneficiaryChartPage() {
       getCertificateStatus({
         hasCertificate: !!currentCertificate,
         validTo: currentCertificate?.validTo,
-        today: toLocalIsoDate(today),
+        today: toJapanIsoDate(today),
       }),
     [currentCertificate, today]
+  );
+  const actionItems = useMemo(
+    () =>
+      chart
+        ? computeActionItems({
+            today: toJapanIsoDate(today),
+            usageStatus: chart.sections.personal.usageStatus,
+            certificate: currentCertificate,
+            documents: documentSubmissions,
+            chartReview: currentCertificate
+              ? { certificateId: currentCertificate.certificateId, pendingCount: currentCertificate.pendingReviewCount }
+              : null,
+          })
+        : [],
+    [chart, currentCertificate, documentSubmissions, today]
   );
 
   if (loading || (user && state === "loading")) {
@@ -174,7 +217,13 @@ function BeneficiaryChartPage() {
         onRegisterCertificate={goRegisterCertificate}
       />
 
-      <ChartTabs active={activeTab} onChange={changeTab} />
+      <ActionItemsPanel
+        items={actionItems}
+        documentsUnavailable={documentSubmissions === null && chart.sections.personal.usageStatus !== "ended"}
+        onNavigate={goToActionTarget}
+      />
+
+      <ChartTabs active={activeTab} onChange={(tab) => changeTab(tab)} />
 
       <div role="tabpanel">
         {activeTab === "basic" && <BasicInfoTab {...tabProps} />}
@@ -184,6 +233,8 @@ function BeneficiaryChartPage() {
             beneficiaryId={beneficiaryId}
             onDirtyChange={setCertificateDirty}
             onSaved={() => void refreshAfterSave()}
+            reviewFocusKey={focusRequest?.focus === "chartReview" ? focusRequest.key : undefined}
+            onReviewRecorded={() => void refreshAfterSave()}
           />
         )}
         {activeTab === "contract" && <ContractTab {...tabProps} />}
@@ -194,6 +245,16 @@ function BeneficiaryChartPage() {
             user={user}
             certificateCount={chart.record.certificateCount}
             certificateStatus={certificateStatus}
+            onShowCertificates={() => changeTab("certificates")}
+            focusType={focusRequest?.focus}
+            focusKey={focusRequest?.key}
+            onChanged={() => void refreshAfterSave()}
+          />
+        )}
+        {activeTab === "history" && (
+          <ChartHistoryTab
+            tenantId={tenantId}
+            beneficiaryId={beneficiaryId}
             onShowCertificates={() => changeTab("certificates")}
           />
         )}

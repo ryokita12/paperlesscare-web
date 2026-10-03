@@ -4,7 +4,7 @@
 // 受給者証タブの上部に表示する。現在の証と現在のカルテを比べ、未確認の候補があるときだけ出る
 // （候補 0 件・adult / child の証では何も表示しない）。
 // OCR の値は候補で、スタッフがチェックした項目だけをカルテへ反映する。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import {
   applyCertificateReview,
@@ -37,6 +37,10 @@ type Props = {
   user: User;
   // カルテを更新したとき（カルテ上部の氏名などを最新にする）
   onChartUpdated?: () => void;
+  // Phase 1-C：カルテを変更せずに判断だけ記録したとき（カルテ上部の「要対応」を最新にする）
+  onReviewRecorded?: () => void;
+  // Phase 1-C：「要対応」から移動してきたとき。値が変わるたびにこのカードを表示してスクロールする
+  focusKey?: number;
 };
 
 function chartDisplay(c: CertificateReviewCandidate): string {
@@ -53,12 +57,35 @@ export default function CertificateReviewCard({
   certificateId,
   user,
   onChartUpdated,
+  onReviewRecorded,
+  focusKey,
 }: Props) {
   const [review, setReview] = useState<CertificateReview | null>(null);
   const [selected, setSelected] = useState<Set<ReviewTarget>>(new Set());
   const [busy, setBusy] = useState(false);
   const [closed, setClosed] = useState(false);
   const [message, setMessage] = useState<ResultMessage>(null);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const scrolledFocusKey = useRef<number | undefined>(undefined);
+
+  // 「あとで確認する」で閉じていても、要対応から移動してきたときは再び表示する
+  const [seenFocusKey, setSeenFocusKey] = useState(focusKey);
+  if (focusKey !== seenFocusKey) {
+    setSeenFocusKey(focusKey);
+    setClosed(false);
+  }
+
+  const hasCandidates = (review?.candidates.length ?? 0) > 0;
+  useEffect(() => {
+    if (focusKey === undefined || focusKey === scrolledFocusKey.current || !hasCandidates || closed) return;
+    // 描画が落ち着いてから瞬時に移動する（smooth だと読み込み中のレイアウト変化で途中で止まることがある）
+    const frame = requestAnimationFrame(() => {
+      scrolledFocusKey.current = focusKey;
+      sectionRef.current?.scrollIntoView({ block: "start" });
+      sectionRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusKey, hasCandidates, closed]);
 
   const load = useCallback(async () => {
     const next = await getCertificateReview({ tenantId, beneficiaryId, certificateId });
@@ -111,6 +138,7 @@ export default function CertificateReviewCard({
         user,
       });
       if (result.applied.length > 0) onChartUpdated?.();
+      else onReviewRecorded?.();
 
       const parts: string[] = [];
       if (result.applied.length > 0) parts.push(`カルテへ反映しました（${targetList(result.applied)}）`);
@@ -154,7 +182,10 @@ export default function CertificateReviewCard({
 
   return (
     <section
-      className="space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 shadow-sm"
+      ref={sectionRef}
+      id="cert-review"
+      tabIndex={-1}
+      className="scroll-mt-28 space-y-4 rounded-2xl border border-indigo-200 bg-indigo-50/40 p-4 shadow-sm outline-none"
       aria-labelledby="cert-review-title"
       data-testid="cert-review"
     >

@@ -52,6 +52,21 @@ export function toLocalIsoDate(date: Date): string {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
+/**
+ * 日本時間（Asia/Tokyo）での日付を "YYYY-MM-DD" で返す。
+ * 受給者証の期限など「日本の暦日」で判定するもの用（端末のタイムゾーン設定に左右されない）。
+ */
+export function toJapanIsoDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
 /** "2015-05-10" → "2015年5月10日"。ISO形式でなければそのまま返す */
 export function formatJapaneseDate(iso: string | null | undefined): string {
   if (!iso) return "";
