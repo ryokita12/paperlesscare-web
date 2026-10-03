@@ -13,6 +13,7 @@
 //              certType / pages を「legacy certificate」として扱う
 import type { FormDataType } from "../../types/cert";
 import type { CertTypeId } from "../../constants/certPages";
+import { extractTsushoValidity } from "../../../../../lib/tsusho/validity.ts";
 
 export type SavedCertPage = {
   pageNo: number;
@@ -184,6 +185,22 @@ export function extractValidity(pages: { pageNo?: number; formData: FormDataType
   return { validFrom: null, validTo: null };
 }
 
+/**
+ * 通所受給者証（tsusho）の期間（一覧・履歴の表示用）。
+ * 二・三面の給付決定期間から、放課後等デイサービスを優先して代表期間を選ぶ（Phase 1-B1 の
+ * extractTsushoValidity をそのまま使う）。利用者負担（五面）・相談支援（四面）の期間は使わない。
+ * 代表期間が無ければ両方 null（一覧では「期限未入力」）。
+ */
+export function extractTsushoCertificateValidity(pages: { pageNo?: number; formData: FormDataType }[]): {
+  validFrom: string | null;
+  validTo: string | null;
+} {
+  const representative = extractTsushoValidity(pages);
+  return representative
+    ? { validFrom: representative.validFrom, validTo: representative.validTo }
+    : { validFrom: null, validTo: null };
+}
+
 export type CertificateDocInput = {
   certType: CertTypeId;
   pages: SavedCertPage[];
@@ -197,6 +214,44 @@ export function buildCertificateContent(input: CertificateDocInput) {
     pages: input.pages,
     summary,
     issueDate: input.pages[0]?.formData.issueDate || "",
-    ...extractValidity(input.pages),
+    // 期間の求め方だけ種別で分ける。summary（一面：name＝児童・number・cityName 等）と issueDate は
+    // tsusho も同じ組み立てで正しい値になる（tsusho の一面は name が児童本人のため）
+    ...(input.certType === "tsusho"
+      ? extractTsushoCertificateValidity(input.pages)
+      : extractValidity(input.pages)),
   };
+}
+
+/**
+ * 既存の利用者へ受給者証を追加したときに、利用者docの profile をどうするか。
+ * 戻り値が null のときは profile を更新しない。
+ *
+ *   mobility / adult / child … 従来どおり mergeProfile（新しい証の値を優先し、空欄だけ従来値で補う）
+ *   tsusho
+ *     - personal（利用者カルテの正本）がある利用者 … profile を更新しない
+ *       （OCR の値でカルテ・既存画面の表示名を変えない。反映は Phase 1-B7 の候補→確認→反映で行う）
+ *     - personal が無い旧データ … 従来の値を優先し、空欄の項目だけ証の値で補う（表示名を変えず、消さない）
+ */
+export function resolveProfileOnCertificateAdd(params: {
+  certType: CertTypeId;
+  certSummary: BeneficiarySummary;
+  previousProfile: Partial<BeneficiaryProfile> | undefined;
+  hasPersonal: boolean;
+}): BeneficiaryProfile | null {
+  const { certType, certSummary, previousProfile, hasPersonal } = params;
+  if (certType !== "tsusho") return mergeProfile(certSummary, previousProfile);
+  if (hasPersonal) return null;
+
+  const base = { ...EMPTY_PROFILE, ...(previousProfile ?? {}) };
+  return {
+    name: base.name || certSummary.name,
+    furigana: base.furigana || certSummary.furigana,
+    birthday: base.birthday || certSummary.birthday,
+  };
+}
+
+/** 利用者docに Phase 1-A のカルテ（personal）があるか */
+export function hasChartPersonal(raw: Record<string, unknown>): boolean {
+  const personal = raw.personal;
+  return !!personal && typeof personal === "object" && !Array.isArray(personal);
 }

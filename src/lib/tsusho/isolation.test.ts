@@ -9,6 +9,13 @@
 //   - 期限処理（certificateModel）・profile 保護（beneficiaries）・Functions・Rules には未接続
 //   - currentCertificateId は単一のまま
 // Phase 1-B4 以降で接続範囲を広げるときは、このテストを意図的に更新すること。
+//
+// 【Phase 1-B5 で意図的に更新】
+// 保存処理に tsusho を接続したため、境界を次のように更新した：
+//   - certificateModel.ts：代表期間は Phase 1-B1 の extractTsushoValidity を呼ぶだけ（期間の計算を重複実装しない）
+//   - beneficiaries.ts：新しい利用者のカルテ初期値（initialChart）と、profile の扱い（certificateModel）を呼ぶだけ
+//   - OCR → カルテ反映の候補（candidates.ts）は、まだアプリから使わない（Phase 1-B7）
+//   - tsusho は引き続き非公開
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -38,7 +45,7 @@ function read(pathFromRepo: string): string {
   return readFileSync(join(REPO_DIR, pathFromRepo), "utf8");
 }
 
-test("境界：src/lib/tsusho を import してよいアプリのコードは certPages.ts と parseCertText.ts だけ（テストは除く）", () => {
+test("境界：src/lib/tsusho を import してよいアプリのコードは、種別・parser・保存モデルの4ファイルだけ（テストは除く）", () => {
   const importers = sourceFiles(SRC_DIR)
     .filter((file) => !file.startsWith(TSUSHO_DIR))
     .filter((file) => !/\.test\.ts$/.test(file))
@@ -48,8 +55,19 @@ test("境界：src/lib/tsusho を import してよいアプリのコードは ce
 
   assert.deepEqual(importers, [
     "app/t/[tenantId]/constants/certPages.ts",
+    "app/t/[tenantId]/lib/firestore/beneficiaries.ts",
+    "app/t/[tenantId]/lib/firestore/certificateModel.ts",
     "app/t/[tenantId]/lib/parsers/parseCertText.ts",
   ]);
+});
+
+test("境界：OCR → カルテ反映の候補（candidates）は、まだアプリから使っていない（Phase 1-B7）", () => {
+  const users = sourceFiles(SRC_DIR)
+    .filter((file) => !file.startsWith(TSUSHO_DIR))
+    .filter((file) => !/\.test\.ts$/.test(file))
+    .filter((file) => /lib\/tsusho\/candidates/.test(readFileSync(file, "utf8")))
+    .map(rel);
+  assert.deepEqual(users, []);
 });
 
 test("境界：tsusho は内部の種別として存在するが、enabled / lineEnabled / adminVisible はすべて false", () => {
@@ -60,13 +78,24 @@ test("境界：tsusho は内部の種別として存在するが、enabled / lin
   assert.equal(tsusho.adminVisible, false);
 });
 
-test("境界：期限処理（certificateModel）と profile 保護（beneficiaries）には tsusho を接続していない", () => {
-  for (const file of [
-    "src/app/t/[tenantId]/lib/firestore/certificateModel.ts",
-    "src/app/t/[tenantId]/lib/firestore/beneficiaries.ts",
-  ]) {
-    assert.equal(/tsusho/i.test(read(file)), false, file);
-  }
+test("境界：certificateModel の tsusho は extractTsushoValidity を呼ぶだけ、beneficiaries は保存モデルの関数を呼ぶだけ", () => {
+  // コメント行（// … ／ * …）は説明文のため除いて、コードだけを確認する
+  const codeOnly = (src: string) =>
+    src
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+
+  const model = read("src/app/t/[tenantId]/lib/firestore/certificateModel.ts");
+  assert.match(model, /import \{ extractTsushoValidity \} from "[^"]*lib\/tsusho\/validity\.ts";/);
+  // 二・三面のキーやサービスの区分を certificateModel で直接扱っていない（期間の計算を重複実装していない）
+  assert.equal(/servicePeriod[2-4]|houkagoDay|放課後等デイサービス/.test(codeOnly(model)), false);
+
+  const beneficiaries = read("src/app/t/[tenantId]/lib/firestore/beneficiaries.ts");
+  assert.match(beneficiaries, /initialChartForNewBeneficiary\(certType, pages\)/);
+  assert.match(beneficiaries, /resolveProfileOnCertificateAdd\(/);
+  // mergeProfile を直接呼ばない（profile の扱いは resolveProfileOnCertificateAdd に集約）
+  assert.equal(/mergeProfile\(/.test(codeOnly(beneficiaries)), false);
 });
 
 test("境界：Functions・Firestore Rules・Storage Rules に tsusho の変更はない", () => {

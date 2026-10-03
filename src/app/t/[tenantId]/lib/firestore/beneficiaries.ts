@@ -20,17 +20,19 @@ import {
   buildSummary,
   EMPTY_PROFILE,
   EMPTY_SUMMARY,
+  hasChartPersonal,
   hasLegacyCertificate,
   LEGACY_CERTIFICATE_ID,
-  mergeProfile,
   mergeSummary,
   profileFromSummary,
+  resolveProfileOnCertificateAdd,
   type BeneficiaryProfile,
   type BeneficiarySummary,
   type CertificateSource,
   type CertificateStatus,
   type SavedCertPage,
 } from "./certificateModel";
+import { initialChartForNewBeneficiary } from "@/lib/tsusho/initialChart";
 
 export type { BeneficiaryProfile, BeneficiarySummary, SavedCertPage };
 export { LEGACY_CERTIFICATE_ID };
@@ -278,6 +280,9 @@ export async function createBeneficiaryWithCertificate(params: {
     certificateCount: 1,
     status: "active",
     certType,
+    // 通所受給者証から作る新しい利用者だけ、利用者カルテ（personal＝児童・guardian＝通所給付決定保護者）の
+    // 初期値を入れる。mobility / adult / child は従来どおり何も追加しない（空オブジェクト）。
+    ...initialChartForNewBeneficiary(certType, pages),
     createdBy: actor,
     createdAt: serverTimestamp(),
     updatedBy: actor,
@@ -417,11 +422,23 @@ export async function addCertificateToBeneficiary(params: {
       (raw.profile as Partial<BeneficiaryProfile> | undefined) ??
       profileFromSummary({ ...EMPTY_SUMMARY, ...(previousSummary ?? {}) });
 
+    // profile：mobility / adult / child は従来どおり（新しい証の値を優先）。
+    // tsusho は personal（カルテ）がある利用者なら更新しない・無ければ空欄だけ補う（certificateModel 参照）。
+    // personal / guardian 等のカルテのマップには、種別を問わず触れない。
+    const profile = resolveProfileOnCertificateAdd({
+      certType,
+      certSummary: content.summary,
+      previousProfile,
+      hasPersonal: hasChartPersonal(raw),
+    });
+
+    // currentCertificateId は単一のまま（Phase 1-B の方針）。種別の違う証（例：child → tsusho）を
+    // 追加した場合も、新しい証が現在の証になり、それまでの証は superseded になる。
     tx.update(beneficiaryRef, {
       currentCertificateId: certificateId,
       certType,
       summary,
-      profile: mergeProfile(content.summary, previousProfile),
+      ...(profile ? { profile } : {}),
       certificateCount: (raw.certificateCount ?? 0) + addedCount,
       updatedBy: actor,
       updatedAt: serverTimestamp(),
