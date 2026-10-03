@@ -19,6 +19,24 @@ service cloud.firestore {
         allow read, write: if request.auth != null &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
       }
+
+      // 利用者カルテの書類（利用契約書・重要事項説明書・個人情報同意書・その他）。
+      // 権限は certificates と同じ「同じテナントの所属者」。加えて書き込み内容を最小限チェックする：
+      //   - type は決められた4種類のみ（受給者証は certificates を使うため含めない）
+      //   - storagePath はこの書類自身の Storage パス（tenants/{t}/recipients/{b}/documents/{d}/...）のみ
+      //   - fileSize は 10MB 以下（storage.rules・アプリ側の上限と同じ）
+      match /documents/{documentId} {
+        allow read, delete: if request.auth != null &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+        allow create, update: if request.auth != null &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId &&
+          request.resource.data.type in ['contract', 'importantMatters', 'privacyConsent', 'other'] &&
+          request.resource.data.storagePath is string &&
+          request.resource.data.storagePath.matches(
+            'tenants/' + tenantId + '/recipients/' + beneficiaryId + '/documents/' + documentId + '/[^/]+') &&
+          request.resource.data.fileSize is int &&
+          request.resource.data.fileSize <= 10 * 1024 * 1024;
+      }
     }
 
     match /{document=**} {

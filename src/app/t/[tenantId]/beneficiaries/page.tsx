@@ -1,29 +1,71 @@
 "use client";
 
-import { useEffect, useState } from "react";
+// 利用者一覧（利用者管理）。
+// 「誰なのか」（氏名・フリガナ・年齢・学年）と「受給者証は大丈夫か」（状態・有効期限）を一覧で確認し、
+// 利用者カルテへ移動する。検索は事業所の利用者を全件読み込んだうえで画面内で絞り込む
+// （1事業所あたり数十〜百件程度の想定。検索用のインデックスや外部サービスは使わない）。
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import styles from "./page.module.css";
 import { useRequireAuth } from "@/lib/auth";
+import { createBeneficiaryWithoutCertificate } from "../lib/firestore/beneficiaries";
 import {
-  createBeneficiaryWithoutCertificate,
-  listBeneficiaries,
-  type BeneficiaryRecord,
-} from "../lib/firestore/beneficiaries";
-import { CERT_TYPES } from "../constants/certPages";
+  listBeneficiaryChartRows,
+  type BeneficiaryChartRow,
+} from "@/lib/beneficiaryChart/chartStore";
+import {
+  CERTIFICATE_STATUS_LABELS,
+  getCertificateStatus,
+  type CertificateStatus,
+  type CertificateStatusKind,
+} from "@/lib/beneficiaryChart/certificateStatus";
+import { formatJapaneseDate, toLocalIsoDate } from "@/lib/beneficiaryChart/dates";
+import {
+  matchesChartSearch,
+  resolveChartIdentity,
+  USAGE_STATUS_OPTIONS,
+  type ChartIdentity,
+} from "@/lib/beneficiaryChart/model";
+import { friendlyChartError } from "@/lib/beneficiaryChart/errors";
+import {
+  CertificateStatusBadge,
+  FormField,
+  inputClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+} from "./components/chartUi";
 
-function certTypeLabel(certType: string | null) {
-  if (!certType) return "受給者証未登録";
-  return CERT_TYPES.find((t) => t.id === certType)?.colorName || certType;
+type ListRow = BeneficiaryChartRow & {
+  identity: ChartIdentity;
+  certStatus: CertificateStatus;
+};
+
+const STATUS_FILTERS: { id: "" | CertificateStatusKind; label: string }[] = [
+  { id: "", label: "すべて" },
+  { id: "valid", label: CERTIFICATE_STATUS_LABELS.valid },
+  { id: "expiringSoon", label: CERTIFICATE_STATUS_LABELS.expiringSoon },
+  { id: "expired", label: CERTIFICATE_STATUS_LABELS.expired },
+  { id: "unknownExpiry", label: CERTIFICATE_STATUS_LABELS.unknownExpiry },
+  { id: "none", label: CERTIFICATE_STATUS_LABELS.none },
+];
+
+function usageStatusLabel(row: ListRow): string {
+  const usage = row.sections.personal.usageStatus;
+  if (usage === "suspended" || usage === "ended") {
+    return USAGE_STATUS_OPTIONS.find((o) => o.id === usage)?.label ?? "";
+  }
+  return "";
 }
 
-function formatUpdatedAt(record: BeneficiaryRecord) {
-  const ts = record.updatedAt;
-  if (!ts) return "未取得";
-  try {
-    return ts.toDate().toLocaleString("ja-JP");
-  } catch {
-    return "未取得";
-  }
+function ageText(identity: ChartIdentity): string {
+  return identity.age === null ? "" : `${identity.age}歳`;
+}
+
+function validToText(row: ListRow): string {
+  return row.currentCertificate?.validTo ? formatJapaneseDate(row.currentCertificate.validTo) : "";
+}
+
+function Muted({ text, empty = "—" }: { text: string; empty?: string }) {
+  return text ? <>{text}</> : <span className="text-zinc-400">{empty}</span>;
 }
 
 export default function BeneficiariesPage() {
@@ -32,21 +74,72 @@ export default function BeneficiariesPage() {
   const router = useRouter();
   const { user, loading } = useRequireAuth();
 
-  const [beneficiaries, setBeneficiaries] = useState<BeneficiaryRecord[]>([]);
-  const [fetching, setFetching] = useState(true);
+  const [rows, setRows] = useState<BeneficiaryChartRow[] | null>(null);
   const [error, setError] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | CertificateStatusKind>("");
+  const [today] = useState(() => new Date());
 
-  // 管理Webから受給者証なしで利用者（枠）だけを作成するフォーム
+  // 受給者証なしで利用者（枠）だけを作成するフォーム（既存の createBeneficiaryWithoutCertificate を使う）
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newFurigana, setNewFurigana] = useState("");
-  const [newBirthday, setNewBirthday] = useState("");
+  const [newBirthDate, setNewBirthDate] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
 
-  const handleCreate = async () => {
-    if (!user || creating || !newName.trim()) return;
+  const load = useCallback(async () => {
+    try {
+      const list = await listBeneficiaryChartRows(tenantId);
+      setRows(list);
+      setError("");
+    } catch (e) {
+      setError(friendlyChartError(e, "load"));
+      setRows([]);
+    }
+  }, [tenantId]);
 
+  useEffect(() => {
+    if (!user || !tenantId) return;
+    void Promise.resolve().then(load);
+  }, [user, tenantId, load]);
+
+  const listRows: ListRow[] = useMemo(() => {
+    const todayIso = toLocalIsoDate(today);
+    return (rows ?? []).map((row) => ({
+      ...row,
+      identity: resolveChartIdentity(row.record, row.sections, today),
+      certStatus: getCertificateStatus({
+        hasCertificate: !!row.currentCertificate,
+        validTo: row.currentCertificate?.validTo,
+        today: todayIso,
+      }),
+    }));
+  }, [rows, today]);
+
+  const filtered = useMemo(
+    () =>
+      listRows.filter(
+        (row) =>
+          matchesChartSearch(row, keyword) && (!statusFilter || row.certStatus.kind === statusFilter)
+      ),
+    [listRows, keyword, statusFilter]
+  );
+
+  const counts = useMemo(() => {
+    const c: Partial<Record<CertificateStatusKind, number>> = {};
+    for (const row of listRows) c[row.certStatus.kind] = (c[row.certStatus.kind] ?? 0) + 1;
+    return c;
+  }, [listRows]);
+
+  const openChart = (id: string) => router.push(`/t/${tenantId}/beneficiaries/${id}`);
+
+  const handleCreate = async () => {
+    if (!user || creating) return;
+    if (!newName.trim()) {
+      setCreateError("氏名を入力してください。");
+      return;
+    }
     setCreating(true);
     setCreateError("");
     try {
@@ -55,226 +148,273 @@ export default function BeneficiariesPage() {
         profile: {
           name: newName.trim(),
           furigana: newFurigana.trim(),
-          birthday: newBirthday.trim(),
+          birthday: formatJapaneseDate(newBirthDate),
         },
         user,
       });
       router.push(`/t/${tenantId}/beneficiaries/${id}`);
     } catch (e: unknown) {
-      setCreateError(e instanceof Error ? e.message : "利用者の作成に失敗しました");
+      setCreateError(friendlyChartError(e, "save"));
       setCreating(false);
     }
   };
 
-  useEffect(() => {
-    if (!user || !tenantId) return;
+  if (loading || (user && rows === null)) {
+    return <div className="text-sm">Loading...</div>;
+  }
 
-    let cancelled = false;
-    setFetching(true);
-    setError("");
-
-    listBeneficiaries(tenantId)
-      .then((records) => {
-        if (!cancelled) setBeneficiaries(records);
-      })
-      .catch((e: any) => {
-        if (!cancelled) setError(e.message || "受給者一覧の取得に失敗しました");
-      })
-      .finally(() => {
-        if (!cancelled) setFetching(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user, tenantId]);
-
-  if (loading || fetching) {
+  if (!user) {
     return (
-      <div className={styles.page}>
-        <div className="text-sm">Loading...</div>
+      <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+        <div className="text-sm">ログインしてください</div>
+        <button
+          className="mt-4 w-full rounded-xl border px-3 py-2 text-sm"
+          onClick={() =>
+            router.push(`/login?next=${encodeURIComponent(`/t/${tenantId}/beneficiaries`)}`)
+          }
+        >
+          Login
+        </button>
       </div>
     );
   }
 
+  const alertCount = (counts.expired ?? 0) + (counts.expiringSoon ?? 0);
+
   return (
-    <div className={styles.page}>
-      <div className={styles.header}>
-        <div>
-          <h1 className={styles.title}>受給者管理</h1>
-          <p className={styles.desc}>
-            受給者の登録・検索・一覧確認を行うための管理画面です。
+    <div className="space-y-5 overflow-x-hidden">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold">利用者管理</h1>
+          <p className="mt-1 text-sm text-zinc-500">
+            利用者を選ぶと、基本情報・受給者証・契約・書類をまとめた「利用者カルテ」が開きます。
           </p>
         </div>
-
-        <button
-          className={styles.primaryButton}
-          type="button"
-          onClick={() => setShowCreateForm((v) => !v)}
-        >
-          ＋ 受給者を新規登録
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={secondaryButtonClass}
+            onClick={() => {
+              setShowCreateForm((v) => !v);
+              setCreateError("");
+            }}
+          >
+            ＋ 新しい利用者を登録
+          </button>
+          <button type="button" className={primaryButtonClass} onClick={() => router.push(`/t/${tenantId}`)}>
+            受給者証を取り込む
+          </button>
+        </div>
       </div>
 
       {showCreateForm && (
-        <div className={styles.searchCard}>
-          <div className={styles.cardTitle}>受給者を新規登録（受給者証なし）</div>
-          <p className={styles.desc}>
-            氏名などの基本情報だけで利用者を作成します。受給者証は作成後の詳細画面から登録できます。
+        <section className="rounded-2xl border border-indigo-300 bg-white p-4 shadow-sm ring-2 ring-indigo-100 sm:p-5">
+          <h2 className="text-base font-bold">新しい利用者を登録（受給者証なし）</h2>
+          <p className="mt-1 text-xs text-zinc-500">
+            氏名などの基本情報だけで利用者を作成します。受給者証は作成後のカルテから登録できます。
+            受給者証の写真から登録する場合は「受給者証を取り込む」を使ってください。
           </p>
-
-          <div className={styles.searchGrid}>
-            <div className={styles.field}>
-              <label className={styles.label}>氏名（必須）</label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="山田 太郎"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-              />
+          <form
+            className="mt-4"
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreate();
+            }}
+          >
+            <div className="grid gap-4 sm:grid-cols-3">
+              <FormField label="氏名" required htmlFor="new-name" error={createError && !newName.trim() ? createError : undefined}>
+                <input id="new-name" className={inputClass} placeholder="山田 太郎" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              </FormField>
+              <FormField label="フリガナ" htmlFor="new-furigana">
+                <input id="new-furigana" className={inputClass} placeholder="ヤマダ タロウ" value={newFurigana} onChange={(e) => setNewFurigana(e.target.value)} />
+              </FormField>
+              <FormField label="生年月日" htmlFor="new-birth">
+                <input id="new-birth" type="date" className={inputClass} value={newBirthDate} onChange={(e) => setNewBirthDate(e.target.value)} />
+              </FormField>
             </div>
-            <div className={styles.field}>
-              <label className={styles.label}>フリガナ</label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="ヤマダ タロウ"
-                value={newFurigana}
-                onChange={(e) => setNewFurigana(e.target.value)}
-              />
+            {createError && newName.trim() && (
+              <p className="mt-3 text-sm text-red-600" role="alert">
+                {createError}
+              </p>
+            )}
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" className={secondaryButtonClass} onClick={() => setShowCreateForm(false)} disabled={creating}>
+                キャンセル
+              </button>
+              <button type="submit" className={primaryButtonClass} disabled={creating}>
+                {creating ? "作成中..." : "作成する"}
+              </button>
             </div>
-            <div className={styles.field}>
-              <label className={styles.label}>生年月日</label>
-              <input
-                className={styles.input}
-                type="text"
-                placeholder="平成20年4月1日"
-                value={newBirthday}
-                onChange={(e) => setNewBirthday(e.target.value)}
-              />
-            </div>
-          </div>
+          </form>
+        </section>
+      )}
 
-          {createError && <div className="mt-3 text-sm text-red-600">⚠️ {createError}</div>}
-
-          <div className={styles.searchActions}>
-            <button
-              className={styles.secondaryButton}
-              type="button"
-              onClick={() => setShowCreateForm(false)}
-              disabled={creating}
-            >
-              キャンセル
-            </button>
-            <button
-              className={styles.primaryButton}
-              type="button"
-              onClick={handleCreate}
-              disabled={creating || !newName.trim()}
-            >
-              {creating ? "作成中..." : "作成する"}
-            </button>
-          </div>
+      {alertCount > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          受給者証の確認が必要な利用者がいます（期限切れ {counts.expired ?? 0}名・期限間近 {counts.expiringSoon ?? 0}名）。
+          <button
+            type="button"
+            className="ml-2 font-semibold underline"
+            onClick={() => setStatusFilter(counts.expired ? "expired" : "expiringSoon")}
+          >
+            表示する
+          </button>
         </div>
       )}
 
-      {/* 検索は未実装のため、スマホ幅では一覧が画面外に押し出されないよう非表示にする */}
-      <div className={`${styles.searchCard} ${styles.hideOnMobile}`}>
-        <div className={styles.cardTitle}>検索条件</div>
-
-        <div className={styles.searchGrid}>
-          <div className={styles.field}>
-            <label className={styles.label}>受給者名</label>
-            <input className={styles.input} type="text" placeholder="山田 太郎" />
-          </div>
-
-          <div className={styles.field}>
-            <label className={styles.label}>受給者番号</label>
-            <input className={styles.input} type="text" placeholder="1234567890" />
-          </div>
-
-          <div className={`${styles.field} ${styles.selectField}`}>
-						<label className={styles.label}>自治体</label>
-						<select className={styles.select} defaultValue="">
-              <option value="">選択してください</option>
-              <option value="名古屋市">名古屋市</option>
-              <option value="春日井市">春日井市</option>
-              <option value="小牧市">小牧市</option>
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="grid gap-3 sm:grid-cols-[1fr_200px]">
+          <FormField label="検索（氏名・フリガナ・受給者証番号）" htmlFor="chart-search">
+            <input
+              id="chart-search"
+              type="search"
+              className={inputClass}
+              placeholder="例：やまだ／山田／1234567890"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+            />
+          </FormField>
+          <FormField label="受給者証の状態" htmlFor="chart-status">
+            <select
+              id="chart-status"
+              className={inputClass}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as "" | CertificateStatusKind)}
+            >
+              {STATUS_FILTERS.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.label}
+                  {f.id ? `（${counts[f.id] ?? 0}）` : ""}
+                </option>
+              ))}
             </select>
-          </div>
-
-          <div className={`${styles.field} ${styles.selectField}`}>
-						<label className={styles.label}>利用状況</label>
-						<select className={styles.select} defaultValue="">
-              <option value="">すべて</option>
-              <option value="利用中">利用中</option>
-              <option value="停止中">停止中</option>
-            </select>
-          </div>
+          </FormField>
         </div>
+      </section>
 
-        <div className={styles.searchActions}>
-          <button className={styles.secondaryButton} type="button">
-            条件をクリア
-          </button>
-          <button className={styles.primaryButton} type="button">
-            検索
-          </button>
-        </div>
-      </div>
-
-      <div className={styles.listCard}>
-        <div className={styles.listHeader}>
-          <div className={styles.cardTitle}>受給者一覧</div>
-          <div className={styles.count}>{beneficiaries.length}件</div>
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm sm:p-5">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-base font-bold">利用者一覧</h2>
+          <div className="text-sm text-zinc-500">
+            {keyword || statusFilter ? `${filtered.length}件 / 全${listRows.length}件` : `${listRows.length}件`}
+          </div>
         </div>
 
         {error && (
-          <div className="mb-3 text-sm text-red-600">⚠️ {error}</div>
+          <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+            {error}
+            <button type="button" className="ml-2 font-semibold underline" onClick={() => void load()}>
+              再読み込み
+            </button>
+          </div>
         )}
 
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead>
-              <tr>
-								<th className={styles.alignLeft}>受給者名</th>
-								<th className={styles.alignCenter}>受給者番号</th>
-								<th className={styles.alignCenter}>生年月日</th>
-								<th className={styles.alignLeft}>証種別</th>
-								<th className={styles.alignCenter}>最終更新日</th>
-							</tr>
-            </thead>
-            <tbody>
-							{beneficiaries.map((item) => (
-								<tr
-									key={item.id}
-									className={styles.tableRow}
-									onClick={() => router.push(`/t/${tenantId}/beneficiaries/${item.id}`)}
-								>
-									<td className={styles.alignLeft}>{item.profile.name || item.summary.name || "未登録"}</td>
-									<td className={styles.alignCenter}>{item.summary.number || "未取得"}</td>
-									<td className={styles.alignCenter}>{item.summary.birthday || "未取得"}</td>
-									<td className={styles.alignLeft}>
-                    <span className={item.certType ? styles.badgeActive : styles.badgeInactive}>
-                      {certTypeLabel(item.certType)}
-                    </span>
-                  </td>
-                  <td className={styles.alignCenter}>{formatUpdatedAt(item)}</td>
-                </tr>
-              ))}
+        {!error && listRows.length === 0 && (
+          <p className="py-10 text-center text-sm text-zinc-500">
+            まだ利用者が登録されていません。「受給者証を取り込む」または「新しい利用者を登録」から登録してください。
+          </p>
+        )}
 
-              {beneficiaries.length === 0 && !error && (
-                <tr>
-                  <td className={styles.alignCenter} colSpan={5}>
-                    まだ登録された受給者がいません。「受給者証取込＆送信」から取り込んでください。
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+        {listRows.length > 0 && filtered.length === 0 && (
+          <p className="py-10 text-center text-sm text-zinc-500">
+            条件に当てはまる利用者がいません。ひらがな・漢字の一部や、受給者証番号の一部でも検索できます。
+          </p>
+        )}
+
+        {filtered.length > 0 && (
+          <>
+            {/* PC：表 */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500">
+                    <th className="px-3 py-2 font-semibold">氏名</th>
+                    <th className="px-3 py-2 font-semibold">フリガナ</th>
+                    <th className="px-3 py-2 font-semibold whitespace-nowrap">年齢</th>
+                    <th className="px-3 py-2 font-semibold whitespace-nowrap">学年</th>
+                    <th className="px-3 py-2 font-semibold whitespace-nowrap">受給者証</th>
+                    <th className="px-3 py-2 font-semibold whitespace-nowrap">有効期限</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((row) => (
+                    <tr
+                      key={row.record.id}
+                      className="cursor-pointer border-b border-zinc-100 last:border-b-0 hover:bg-zinc-50"
+                      onClick={() => openChart(row.record.id)}
+                    >
+                      <td className="px-3 py-3">
+                        <button
+                          type="button"
+                          className="text-left font-semibold text-indigo-700 hover:underline"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openChart(row.record.id);
+                          }}
+                        >
+                          {row.identity.name || "氏名未登録"}
+                        </button>
+                        {usageStatusLabel(row) && (
+                          <span className="ml-2 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">
+                            {usageStatusLabel(row)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-zinc-600">
+                        <Muted text={row.identity.furigana} />
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <Muted text={ageText(row.identity)} />
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <Muted text={row.identity.grade} />
+                      </td>
+                      <td className="px-3 py-3">
+                        <CertificateStatusBadge kind={row.certStatus.kind} label={row.certStatus.label} />
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <Muted text={validToText(row)} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* スマホ・狭い画面：カード */}
+            <ul className="divide-y divide-zinc-100 md:hidden">
+              {filtered.map((row) => (
+                <li key={row.record.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-start justify-between gap-3 py-3 text-left"
+                    onClick={() => openChart(row.record.id)}
+                  >
+                    <div className="min-w-0">
+                      {row.identity.furigana && (
+                        <div className="truncate text-xs text-zinc-500">{row.identity.furigana}</div>
+                      )}
+                      <div className="truncate font-semibold">
+                        {row.identity.name || "氏名未登録"}
+                        {usageStatusLabel(row) && (
+                          <span className="ml-2 text-xs font-normal text-zinc-500">（{usageStatusLabel(row)}）</span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 text-xs text-zinc-500">
+                        {[ageText(row.identity), row.identity.grade, validToText(row) && `期限 ${validToText(row)}`]
+                          .filter(Boolean)
+                          .join("・") || "年齢・期限 未登録"}
+                      </div>
+                    </div>
+                    <CertificateStatusBadge kind={row.certStatus.kind} label={row.certStatus.label} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
     </div>
   );
 }

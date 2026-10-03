@@ -1,5 +1,8 @@
+"use client";
+
 // src/app/components/SideNav.tsx
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 type Props = {
   tenantId: string;
@@ -7,38 +10,110 @@ type Props = {
   onNavigate?: () => void;
 };
 
-export default function SideNav({
-  tenantId,
-  currentPath = "",
-  onNavigate,
-}: Props) {
-  const items = [
-    { href: `/t/${tenantId}`, label: "受給者証取込＆送信", icon: "/icons/icon-upload.svg" },
-    { href: `/t/${tenantId}/beneficiaries`, label: "受給者管理", icon: "/icons/icon-user.svg" },
-    { href: `/t/${tenantId}/settings`, label: "システム設定", icon: "/icons/icon-settings.svg" },
+type NavLinkItem = {
+  kind: "link";
+  href: string;
+  label: string;
+  icon?: string;
+  // 子項目（受給者証の取込など）として字下げ表示する
+  nested?: boolean;
+  isActive: (path: string) => boolean;
+};
+
+// 開発中の機能。リンクにせず、押せない表示にする
+type NavPlannedItem = { kind: "planned"; label: string };
+
+type NavItem = NavLinkItem | NavPlannedItem;
+
+export default function SideNav({ tenantId, currentPath, onNavigate }: Props) {
+  const pathname = usePathname();
+  const path = currentPath || pathname || "";
+
+  const base = `/t/${tenantId}`;
+  const beneficiariesPath = `${base}/beneficiaries`;
+  const settingsPath = `${base}/settings`;
+
+  const mainItems: NavItem[] = [
+    {
+      kind: "link",
+      href: beneficiariesPath,
+      label: "利用者管理",
+      icon: "/icons/icon-user.svg",
+      isActive: (p) => p === beneficiariesPath || p.startsWith(`${beneficiariesPath}/`),
+    },
+    {
+      // 既存の「受給者証取込＆送信」（/t/{tenantId}）。URL・機能はそのまま、利用者管理の下に置く
+      kind: "link",
+      href: base,
+      label: "受給者証を取り込む",
+      icon: "/icons/icon-upload.svg",
+      nested: true,
+      isActive: (p) => p === base || p === `${base}/capture`,
+    },
+    { kind: "planned", label: "スケジュール" },
+    { kind: "planned", label: "支援記録" },
+    { kind: "planned", label: "支援計画" },
+    { kind: "planned", label: "実績管理" },
+    { kind: "planned", label: "帳票" },
   ];
 
-  const isActive = (href: string) => currentPath === href;
+  const adminItems: NavItem[] = [
+    { kind: "planned", label: "スタッフ管理" },
+    {
+      kind: "link",
+      href: settingsPath,
+      label: "システム設定",
+      icon: "/icons/icon-settings.svg",
+      isActive: (p) => p === settingsPath,
+    },
+  ];
+
+  const renderItem = (it: NavItem) => {
+    if (it.kind === "planned") {
+      return (
+        <div
+          key={it.label}
+          className="pcare-sidenav__item pcare-sidenav__item--planned"
+          aria-disabled="true"
+          title="この機能は現在開発中です"
+        >
+          <span className="pcare-sidenav__icon pcare-sidenav__icon--blank" aria-hidden="true" />
+          <span>{it.label}</span>
+          <span className="pcare-sidenav__badge">開発中</span>
+        </div>
+      );
+    }
+
+    const active = it.isActive(path);
+    return (
+      <Link
+        key={it.href}
+        href={it.href}
+        onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
+        className={[
+          "pcare-sidenav__item",
+          it.nested ? "pcare-sidenav__item--nested" : "",
+          active ? "pcare-sidenav__item--active" : "",
+        ].join(" ")}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={it.icon} alt="" className="pcare-sidenav__icon" />
+        <span>{it.label}</span>
+      </Link>
+    );
+  };
 
   return (
     <aside className="pcare-sidenav" aria-label="Side menu">
       <div className="pcare-sidenav__section">
         <div className="pcare-sidenav__label">メニュー</div>
+        {mainItems.map(renderItem)}
+      </div>
 
-        {items.map((it) => (
-          <Link
-            key={it.href}
-            href={it.href}
-            onClick={onNavigate}
-            className={[
-              "pcare-sidenav__item",
-              isActive(it.href) ? "pcare-sidenav__item--active" : "",
-            ].join(" ")}
-          >
-            <img src={it.icon} alt="" className="pcare-sidenav__icon" />
-            <span>{it.label}</span>
-          </Link>
-        ))}
+      <div className="pcare-sidenav__section">
+        <div className="pcare-sidenav__label">管理</div>
+        {adminItems.map(renderItem)}
       </div>
 
       <div className="pcare-sidenav__section">
@@ -48,6 +123,7 @@ export default function SideNav({
           href="/logout"
           onClick={onNavigate}
         >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icons/icon-logout.svg" alt="" className="pcare-sidenav__icon" />
           <span>ログアウト</span>
         </Link>
@@ -92,10 +168,39 @@ export default function SideNav({
           background:#e5e7eb;
         }
 
+        .pcare-sidenav__item--nested{
+          margin-left:16px;
+          padding-top:8px;
+          padding-bottom:8px;
+          font-size:13px;
+        }
+
         .pcare-sidenav__item--active{
           background:#eef2ff;
           color:#4f46e5;
           font-weight:600;
+        }
+
+        .pcare-sidenav__item--planned{
+          color:#9ca3af;
+          cursor:not-allowed;
+          user-select:none;
+        }
+
+        .pcare-sidenav__item--planned:hover{
+          background:transparent;
+        }
+
+        .pcare-sidenav__badge{
+          margin-left:auto;
+          flex-shrink:0;
+          font-size:11px;
+          font-weight:600;
+          color:#6b7280;
+          background:#f3f4f6;
+          border:1px solid #e5e7eb;
+          border-radius:999px;
+          padding:1px 8px;
         }
 
         .pcare-sidenav__icon{
@@ -105,16 +210,12 @@ export default function SideNav({
           flex-shrink:0;
         }
 
-        .pcare-sidenav__item--active .pcare-sidenav__icon{
-          opacity:1;
+        .pcare-sidenav__icon--blank{
+          display:inline-block;
         }
 
-        .pcare-sidenav__logout-icon{
-          width:18px;
-          text-align:center;
-          font-size:15px;
-          opacity:.85;
-          flex-shrink:0;
+        .pcare-sidenav__item--active .pcare-sidenav__icon{
+          opacity:1;
         }
 
         .pcare-sidenav__item--danger{

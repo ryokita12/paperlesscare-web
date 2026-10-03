@@ -170,7 +170,8 @@ function importRoutes(tenantId: string, variant: CertImportVariant): ImportRoute
     capture: `/t/${tenantId}/capture`,
     beneficiaries: `/t/${tenantId}/beneficiaries`,
     beneficiaryDetail: (id) => `/t/${tenantId}/beneficiaries/${id}`,
-    afterSave: (id) => `/t/${tenantId}/beneficiaries/${id}`,
+    // 管理Webは保存後、利用者カルテの「受給者証」タブを開く（LINE版の遷移先は上の分岐で別に定義）
+    afterSave: (id) => `/t/${tenantId}/beneficiaries/${id}?tab=certificates`,
   };
 }
 

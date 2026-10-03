@@ -18,6 +18,17 @@ service firebase.storage {
       allow read, write: if request.auth != null && callerTenantId() == tenantId;
     }
 
+    // 利用者カルテの書類（PDF / JPEG / PNG、10MBまで）。権限は上の受給者証画像と同じテナント所属チェック。
+    // 上書き（同じパスへの再アップロード）は不可。差し替えは「削除して再登録」で行う
+    // （エミュレーターでは既存ファイルへの再アップロードも create と判定されたため、resource == null で明示的に拒否する）。
+    match /tenants/{tenantId}/recipients/{recipientId}/documents/{documentId}/{fileName} {
+      allow read, delete: if request.auth != null && callerTenantId() == tenantId;
+      allow create: if request.auth != null && callerTenantId() == tenantId &&
+        resource == null &&
+        request.resource.size <= 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('application/pdf|image/jpeg|image/png');
+    }
+
     // 本機能追加以前に保存された受給者証画像（uploads/{uid}/...）を
     // 引き続き閲覧できるようにするための読み取り専用ルール。
     // アップロード者のtenantIdと閲覧者のtenantIdが一致すれば読める

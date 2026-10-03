@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\""
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "test:rules": "firebase emulators:exec --project demo-paperlesscare --only auth,firestore,storage \"node --test tests/rules/*.test.mjs\""
   },
   "dependencies": {
     "@line/liff": "^2.31.1",

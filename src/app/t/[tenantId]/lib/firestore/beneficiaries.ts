@@ -104,7 +104,8 @@ function normalizePages(pages: unknown): SavedCertPage[] {
 // - currentCertificateId が無い旧データは、直下の certType / pages を legacy certificate とみなす
 //   （certType が欠けている旧データは "adult"。child/mobility は当時まだ選べなかったため）
 // - summary / pages / profile が欠けている不正データを既定値で補い、一覧・詳細画面が丸ごと落ちないようにする
-function normalizeBeneficiaryData(
+// 利用者カルテ（src/lib/beneficiaryChart）からも同じ正規化を使うため export している（処理内容は変更なし）。
+export function normalizeBeneficiaryData(
   id: string,
   data: Record<string, unknown>
 ): BeneficiaryRecord {
