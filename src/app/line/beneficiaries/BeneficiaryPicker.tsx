@@ -1,9 +1,10 @@
 "use client";
 
 // 利用者の検索＋一覧（「利用者を確認する」と「登録済みの利用者を選ぶ」で共通）。
+// Phase 2：「今日の利用」の「予定にない子が来た」でも使う（onSelect：画面遷移せずに選んだ利用者を返す）。
 // 一覧はログイン中スタッフの事業所（tenantId）の利用者だけを読み込む（Firestore Rulesでも他事業所は読めない）。
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   listBeneficiaries,
   type BeneficiaryRecord,
@@ -57,14 +58,26 @@ function useBeneficiaryList(tenantId: string) {
 
 export default function BeneficiaryPicker({
   hrefFor,
+  onSelect,
+  excludeIds,
+  disabled = false,
 }: {
   /** 利用者をタップしたときの遷移先 */
-  hrefFor: (b: BeneficiaryRecord) => string;
+  hrefFor?: (b: BeneficiaryRecord) => string;
+  /** 遷移せずに選んだ利用者を受け取る（hrefFor より優先） */
+  onSelect?: (b: BeneficiaryRecord) => void;
+  /** 一覧に出さない利用者（例：今日すでに予定・記録がある子） */
+  excludeIds?: ReadonlySet<string>;
+  disabled?: boolean;
 }) {
   const { tenantId } = useLineStaff();
-  const { items, error, retry } = useBeneficiaryList(tenantId);
+  const { items: allItems, error, retry } = useBeneficiaryList(tenantId);
   const [keyword, setKeyword] = useState("");
 
+  const items = useMemo(
+    () => (allItems && excludeIds ? allItems.filter((b) => !excludeIds.has(b.id)) : allItems),
+    [allItems, excludeIds]
+  );
   const filtered = useMemo(() => filterBeneficiaries(items ?? [], keyword), [items, keyword]);
 
   if (error) {
@@ -131,10 +144,7 @@ export default function BeneficiaryPicker({
             const furigana = beneficiaryFurigana(b);
             return (
               <li key={b.id} className="border-b border-zinc-100 last:border-b-0">
-                <Link
-                  href={hrefFor(b)}
-                  className="flex min-h-[4.5rem] items-center gap-3 px-5 py-3.5 active:bg-emerald-50"
-                >
+                <PickerRow b={b} hrefFor={hrefFor} onSelect={onSelect} disabled={disabled}>
                   <div className="min-w-0 flex-1">
                     {furigana && <div className="truncate text-sm text-zinc-500">{furigana}</div>}
                     <div className="truncate text-lg font-bold">
@@ -152,12 +162,40 @@ export default function BeneficiaryPicker({
                     )}
                   </div>
                   <IconChevronRight className="h-6 w-6 shrink-0 text-zinc-300" />
-                </Link>
+                </PickerRow>
               </li>
             );
           })}
         </ul>
       )}
     </div>
+  );
+}
+
+function PickerRow({
+  b,
+  hrefFor,
+  onSelect,
+  disabled,
+  children,
+}: {
+  b: BeneficiaryRecord;
+  hrefFor?: (b: BeneficiaryRecord) => string;
+  onSelect?: (b: BeneficiaryRecord) => void;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const cls = "flex min-h-[4.5rem] w-full items-center gap-3 px-5 py-3.5 text-left active:bg-emerald-50";
+  if (onSelect || !hrefFor) {
+    return (
+      <button type="button" className={`${cls} disabled:opacity-50`} disabled={disabled} onClick={() => onSelect?.(b)}>
+        {children}
+      </button>
+    );
+  }
+  return (
+    <Link href={hrefFor(b)} className={cls}>
+      {children}
+    </Link>
   );
 }

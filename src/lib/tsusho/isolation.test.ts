@@ -31,6 +31,12 @@
 //   - 確認カードは管理Webの受給者証タブだけで使い、LINE（src/app/line）からは使わない
 //   - 反映処理（chartStore の applyCertificateReview）は summary / currentCertificateId / status /
 //     supersededBy / pages を書き込まない
+//
+// 【Phase 2 で意図的に更新】
+// 予定・実績で支給量（日/月）と月の利用日数を比べるため、src/lib/usage/summary.ts（純粋関数）から
+// 給付決定内容の読み取り（services.ts の extractTsushoServices）だけを使う。境界を次のように更新した：
+//   - tsusho を import してよいファイルに lib/usage/summary.ts を追加（支給量の読み取りを重複実装しない）
+//   - summary.ts が使うのは services（と型）だけ。candidates・parser・保存モデルには触れない
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -75,7 +81,14 @@ test("境界：src/lib/tsusho を import してよいアプリのコードは、
     "app/t/[tenantId]/lib/firestore/certificateModel.ts",
     "app/t/[tenantId]/lib/parsers/parseCertText.ts",
     "lib/beneficiaryChart/certificateReview.ts",
+    "lib/usage/summary.ts",
   ]);
+});
+
+test("境界：予定・実績（src/lib/usage/summary.ts）が tsusho から使うのは給付決定内容の読み取り（services）と型だけ", () => {
+  const source = read("src/lib/usage/summary.ts");
+  const imports = [...source.matchAll(/from\s+["']([^"']*tsusho\/[^"']*)["']/g)].map((m) => m[1]).sort();
+  assert.deepEqual(imports, ["../tsusho/services.ts", "../tsusho/types.ts"]);
 });
 
 test("境界：OCR → カルテ反映の候補（candidates）を使うのは certificateReview.ts だけ（Phase 1-B7）", () => {

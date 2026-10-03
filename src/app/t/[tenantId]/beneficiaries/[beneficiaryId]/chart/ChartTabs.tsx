@@ -2,6 +2,7 @@
 
 // 利用者カルテのタブ。主要タブ＋開発中の機能（押せない表示）
 // Phase 1-C：「変更履歴」を追加
+// Phase 2：「利用予定」を有効化（実績は利用予定タブの中で確認するため、開発中の「実績」は外した）
 import { PlannedBadge } from "../../components/chartUi";
 
 export const CHART_TABS = [
@@ -9,12 +10,13 @@ export const CHART_TABS = [
   { id: "certificates", label: "受給者証" },
   { id: "contract", label: "契約・関係先" },
   { id: "documents", label: "書類" },
+  { id: "usage", label: "利用予定" },
   { id: "history", label: "変更履歴" },
 ] as const;
 
 export type ChartTabId = (typeof CHART_TABS)[number]["id"];
 
-const PLANNED_TABS = ["利用予定", "支援記録", "支援計画", "モニタリング", "実績"];
+const PLANNED_TABS = ["支援記録", "支援計画", "モニタリング"];
 
 export function isChartTabId(value: string | null): value is ChartTabId {
   return CHART_TABS.some((t) => t.id === value);

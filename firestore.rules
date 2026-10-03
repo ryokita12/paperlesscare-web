@@ -80,6 +80,77 @@ service cloud.firestore {
       }
     }
 
+    // 利用記録（Phase 2「予定 → 実績」）。1件 = 1人の利用者 × 1日。
+    // 予定（scheduled）→ 来所（attended）/ 欠席（absent）/ キャンセル（cancelled）と、同じdocが状態を変える。
+    // 権限は利用者docと同じ「同じテナントの所属者」（管理Web・LINEスタッフとも）。加えて書き込み内容を検証する：
+    //   - docのIDは "{date}_{beneficiaryId}"（同じ子の同じ日を二重に作れない）、yearMonth は date の年月
+    //   - status / origin は決められた値のみ。予定時刻・実績時刻は "HH:mm"（00:00〜23:59）または ""
+    //     （予定外の来所以外は予定時刻が必須）。開始 < 終了 の大小はアプリ側（src/lib/usage）で保証する
+    //   - 作成時は同じテナントに実在する利用者のみ。作成者・作成日時は以後変更できない
+    //   - updatedBy は書き込んだ本人、updatedAt はサーバー時刻
+    //   - 削除できるのは「予定」「キャンセル」と、予定外の来所（誤登録の取消）だけ。来所・欠席の記録は消せない
+    match /tenants/{tenantId}/usageRecords/{recordId} {
+      function isTenantMember() {
+        return request.auth != null &&
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.tenantId == tenantId;
+      }
+      function isTime(v) {
+        return v is string && v.matches('([01][0-9]|2[0-3]):[0-5][0-9]');
+      }
+      function isTimeOrEmpty(v) {
+        return v is string && (v == '' || isTime(v));
+      }
+      function isActor(a) {
+        return a is map && a.keys().hasAll(['uid', 'email', 'name']) && a.keys().hasOnly(['uid', 'email', 'name']) &&
+          a.uid is string && (a.email == null || a.email is string) && a.name is string && a.name.size() <= 100;
+      }
+      function isValidRecord(d) {
+        return d.keys().hasAll(['schemaVersion', 'beneficiaryId', 'date', 'yearMonth', 'status', 'origin', 'planned',
+            'actual', 'absence', 'note', 'statusLog', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt']) &&
+          d.keys().hasOnly(['schemaVersion', 'beneficiaryId', 'date', 'yearMonth', 'status', 'origin', 'planned',
+            'actual', 'absence', 'note', 'statusLog', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt']) &&
+          d.schemaVersion == 1 &&
+          d.beneficiaryId is string && d.beneficiaryId.size() > 0 &&
+          d.date is string && d.date.matches('[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])') &&
+          d.yearMonth is string && d.yearMonth.matches('[0-9]{4}-[0-9]{2}') && d.date.matches(d.yearMonth + '-[0-9]{2}') &&
+          recordId == d.date + '_' + d.beneficiaryId &&
+          d.status in ['scheduled', 'attended', 'absent', 'cancelled'] &&
+          d.origin in ['pattern', 'manual', 'walkIn'] &&
+          d.planned is map && d.planned.keys().hasAll(['startTime', 'endTime']) &&
+          d.planned.keys().hasOnly(['startTime', 'endTime']) &&
+          isTimeOrEmpty(d.planned.startTime) && isTimeOrEmpty(d.planned.endTime) &&
+          (d.origin == 'walkIn' || (isTime(d.planned.startTime) && isTime(d.planned.endTime))) &&
+          d.actual is map && d.actual.keys().hasAll(['startTime', 'endTime', 'pickup', 'dropoff']) &&
+          d.actual.keys().hasOnly(['startTime', 'endTime', 'pickup', 'dropoff']) &&
+          isTimeOrEmpty(d.actual.startTime) && isTimeOrEmpty(d.actual.endTime) &&
+          (d.actual.pickup == null || d.actual.pickup is bool) &&
+          (d.actual.dropoff == null || d.actual.dropoff is bool) &&
+          d.absence is map && d.absence.keys().hasAll(['reason', 'contactedAt']) &&
+          d.absence.keys().hasOnly(['reason', 'contactedAt']) &&
+          d.absence.reason is string && d.absence.reason.size() <= 200 &&
+          d.absence.contactedAt is string && d.absence.contactedAt.matches('([0-9]{4}-[0-9]{2}-[0-9]{2})?') &&
+          d.note is string && d.note.size() <= 500 &&
+          d.statusLog is list && d.statusLog.size() <= 30 &&
+          isActor(d.createdBy) && isActor(d.updatedBy) &&
+          d.updatedBy.uid == request.auth.uid &&
+          d.updatedBy.email == request.auth.token.get('email', null) &&
+          d.updatedAt == request.time;
+      }
+
+      allow read: if isTenantMember();
+      allow create: if isTenantMember() &&
+        isValidRecord(request.resource.data) &&
+        request.resource.data.createdBy.uid == request.auth.uid &&
+        request.resource.data.createdAt == request.time &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/beneficiaries/$(request.resource.data.beneficiaryId));
+      allow update: if isTenantMember() &&
+        isValidRecord(request.resource.data) &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isTenantMember() &&
+        (resource.data.status in ['scheduled', 'cancelled'] || resource.data.origin == 'walkIn');
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

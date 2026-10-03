@@ -32,8 +32,19 @@ export default function SideNav({ tenantId, currentPath, onNavigate }: Props) {
   const base = `/t/${tenantId}`;
   const beneficiariesPath = `${base}/beneficiaries`;
   const settingsPath = `${base}/settings`;
+  const todayPath = `${base}/today`;
+  const schedulePath = `${base}/schedule`;
+  const usagePath = `${base}/usage`;
 
   const mainItems: NavItem[] = [
+    {
+      // Phase 2：日常業務の中心（ログイン後のメイン画面）
+      kind: "link",
+      href: todayPath,
+      label: "今日の利用",
+      icon: "/icons/icon-calendar.svg",
+      isActive: (p) => p === todayPath,
+    },
     {
       kind: "link",
       href: beneficiariesPath,
@@ -50,10 +61,22 @@ export default function SideNav({ tenantId, currentPath, onNavigate }: Props) {
       nested: true,
       isActive: (p) => p === base || p === `${base}/capture`,
     },
-    { kind: "planned", label: "スケジュール" },
+    {
+      kind: "link",
+      href: schedulePath,
+      label: "利用予定",
+      icon: "/icons/icon-schedule.svg",
+      isActive: (p) => p === schedulePath,
+    },
+    {
+      kind: "link",
+      href: usagePath,
+      label: "実績",
+      icon: "/icons/icon-report.svg",
+      isActive: (p) => p === usagePath,
+    },
     { kind: "planned", label: "支援記録" },
     { kind: "planned", label: "支援計画" },
-    { kind: "planned", label: "実績管理" },
     { kind: "planned", label: "帳票" },
   ];
 

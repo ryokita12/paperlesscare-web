@@ -56,7 +56,7 @@ export default function LoginClient() {
       const data = await res.json();
       const tenantId = data.fields?.tenantId?.stringValue || "";
 
-      router.replace(tenantId ? `/t/${tenantId}` : "/login");
+      router.replace(tenantId ? `/t/${tenantId}/today` : "/login");
     } catch (e: any) {
       console.error("[LOGIN] ERROR", e);
 

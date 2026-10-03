@@ -2,7 +2,7 @@
 
 // 利用者カルテ（旧：利用者詳細）。URL は従来どおり /t/{tenantId}/beneficiaries/{beneficiaryId}。
 // 受給者証の取込・更新の保存後もこのURLへ戻ってくる（CertImportFlow は変更していない）。
-// タブは ?tab=basic|certificates|contract|documents|history で指定でき、省略時は「基本情報」。
+// タブは ?tab=basic|certificates|contract|documents|usage|history で指定でき、省略時は「基本情報」。
 // Phase 1-C：上部に「要対応」（受給者証の期限・必要書類の未提出・カルテ反映候補の未確認）を表示し、
 // 各項目から該当するタブ・箇所へ移動できる（?focus=chartReview|{書類の種別} で移動先の箇所を指定）。
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -29,6 +29,7 @@ import DocumentsTab from "./chart/DocumentsTab";
 import CertificatesPanel from "./chart/CertificatesPanel";
 import ActionItemsPanel from "./chart/ActionItemsPanel";
 import ChartHistoryTab from "./chart/ChartHistoryTab";
+import UsageTab from "./chart/UsageTab";
 import { secondaryButtonClass } from "../components/chartUi";
 
 const LEAVE_CONFIRM = "保存していない入力があります。入力内容を破棄して移動しますか？";
@@ -249,6 +250,15 @@ function BeneficiaryChartPage() {
             focusType={focusRequest?.focus}
             focusKey={focusRequest?.key}
             onChanged={() => void refreshAfterSave()}
+          />
+        )}
+        {activeTab === "usage" && (
+          <UsageTab
+            tenantId={tenantId}
+            beneficiaryId={beneficiaryId}
+            beneficiaryName={identity.name}
+            user={user}
+            control={{ editingId, setEditingId }}
           />
         )}
         {activeTab === "history" && (

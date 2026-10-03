@@ -108,6 +108,14 @@ export const IconImage = (p: IconProps) => (
   </Svg>
 );
 
+export const IconCalendar = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="15.5" rx="2.5" />
+    <path d="M3.5 10h17M8 3v4M16 3v4" />
+    <path d="m9 15 2 2 4-4" />
+  </Svg>
+);
+
 export const IconHome = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 11 12 4.5 20 11" />
