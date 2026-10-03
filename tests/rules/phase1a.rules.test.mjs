@@ -268,3 +268,38 @@ test("書類ファイル：形式・サイズ・上書き・他の事業所は�
   assert.ok(denied(await stDelete(`${dir}/s2/file.jpg`, userB.token)));
   assert.ok(denied(await stGet(`${dir}/s2/file.jpg`, undefined)));
 });
+
+// ===== Phase 1-B7：受給者証の内容をカルテへ反映（rules は変更なし。既存の権限で足りることの確認） =====
+
+// フィールドパス単位の部分更新（アプリの tx.update(ref, { "personal.name": ... }) 相当）
+async function fsUpdatePaths(path, token, paths, body) {
+  const mask = paths.map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`).join("&");
+  const res = await fetch(`${FS}/${path}?${mask}&currentDocument.exists=true`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ fields: toFields(body) }),
+  });
+  return res.status;
+}
+
+test("反映候補：同じ事業所は personal.* / profile.* と証doc の chartReview を項目単位で更新できる", async () => {
+  const ben = `tenants/${TA}/beneficiaries/${BEN}`;
+  assert.ok(ok(await fsUpdatePaths(ben, adminA.token, ["personal.furigana", "profile.furigana"], {
+    personal: { furigana: "ヤマダ タロウ" },
+    profile: { furigana: "ヤマダ タロウ" },
+  })));
+  assert.ok(ok(await fsUpdatePaths(`${ben}/certificates/cert1`, adminA.token, ["chartReview.decisions.personal_furigana"], {
+    chartReview: { decisions: { personal_furigana: { action: "applied", certValueNormalized: "ヤマダタロウ" } } },
+  })));
+});
+
+test("反映候補：他の事業所・未所属・未ログインはカルテ・chartReview を更新できず、読めもしない", async () => {
+  const ben = `tenants/${TA}/beneficiaries/${BEN}`;
+  for (const token of [userB.token, noTenant.token, undefined]) {
+    assert.ok(denied(await fsUpdatePaths(ben, token, ["personal.name"], { personal: { name: "x" } })));
+    assert.ok(denied(await fsUpdatePaths(`${ben}/certificates/cert1`, token, ["chartReview.decisions.personal_name"], {
+      chartReview: { decisions: { personal_name: { action: "dismissed" } } },
+    })));
+    assert.ok(denied(await fsGet(`${ben}/certificates/cert1`, token)));
+  }
+});

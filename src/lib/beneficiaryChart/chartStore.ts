@@ -4,6 +4,7 @@
 // カルテの各マップ（personal / guardian / contract / school / consultationSupport）だけを
 // updateDoc で更新する。受給者証まわりのフィールド（summary / currentCertificateId /
 // certificateCount / certType / pages）には書き込まない。
+// Phase 1-B7 の受給者証の反映候補（applyCertificateReview）も同じで、証doc には chartReview だけを書く。
 import type { User } from "firebase/auth";
 import {
   collection,
@@ -12,6 +13,7 @@ import {
   getDocs,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
@@ -29,6 +31,15 @@ import {
   type BeneficiaryPersonal,
   type ChartSectionKey,
 } from "./model";
+import {
+  buildCertificateReview,
+  buildChartFieldUpdates,
+  buildReviewDecisions,
+  planCertificateReview,
+  type CertificateReview,
+  type CertificateReviewCandidate,
+  type ReviewTarget,
+} from "./certificateReview";
 
 export type BeneficiaryChart = {
   record: BeneficiaryRecord;
@@ -144,5 +155,129 @@ export async function saveChartSection<K extends Exclude<ChartSectionKey, "perso
     ...buildSectionUpdate(key, value),
     updatedBy: actorOf(user),
     updatedAt: serverTimestamp(),
+  });
+}
+
+// ===== 受給者証（tsusho）の内容をカルテへ反映する確認（Phase 1-B7） =====
+
+function certificateRef(tenantId: string, beneficiaryId: string, certificateId: string) {
+  return doc(db, "tenants", tenantId, "beneficiaries", beneficiaryId, "certificates", certificateId);
+}
+
+function asPages(value: unknown) {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * 現在の受給者証と現在のカルテを読み、確認画面に出す反映候補を作る。
+ * 現在の証でない・tsusho でない・未確認の候補が無い場合は候補 0 件。
+ */
+export async function getCertificateReview(params: {
+  tenantId: string;
+  beneficiaryId: string;
+  certificateId: string;
+}): Promise<CertificateReview> {
+  const { tenantId, beneficiaryId, certificateId } = params;
+  const [snap, certSnap] = await Promise.all([
+    getDoc(beneficiaryRef(tenantId, beneficiaryId)),
+    getDoc(certificateRef(tenantId, beneficiaryId, certificateId)),
+  ]);
+  const raw = snap.exists() ? snap.data() : null;
+  const cert = certSnap.exists() ? certSnap.data() : null;
+  const isCurrent = raw?.currentCertificateId === certificateId;
+  return buildCertificateReview({
+    certType: raw && cert && isCurrent ? String(cert.certType ?? "") : "",
+    pages: asPages(cert?.pages),
+    record: normalizeBeneficiaryData(beneficiaryId, raw ?? {}),
+    sections: readChartSections(raw ?? {}),
+    chartReview: cert?.chartReview,
+  });
+}
+
+export type CertificateReviewResult = {
+  applied: ReviewTarget[];
+  dismissed: ReviewTarget[];
+  /** 確認画面を開いたあとに別の操作でカルテ（または証）が変わったため、反映しなかった項目 */
+  stale: ReviewTarget[];
+};
+
+export class CertificateReviewOutdatedError extends Error {
+  constructor() {
+    super("この受給者証は現在の受給者証ではなくなりました。最新の情報を確認してください。");
+    this.name = "CertificateReviewOutdatedError";
+  }
+}
+
+/**
+ * 確認画面で選んだ内容を反映する（mode "apply"）か、すべて反映しない（mode "dismiss"）。
+ * 1つのトランザクションで：
+ *   - 利用者doc と証doc を読み直し、表示時から値が変わった項目は反映も記録もしない（stale）
+ *   - 反映する項目だけをフィールドパスで更新（personal / guardian / consultationSupport を丸ごと置き換えない）
+ *     personal の氏名・フリガナ・生年月日は profile の同じ項目にも写す。summary・currentCertificateId には触れない
+ *   - 証doc の chartReview に、反映 / 反映しないの判断を項目ごとに記録（証の pages・status 等には触れない）
+ * 反映する項目が無い場合（「今回は反映しない」など）は利用者doc を更新しない。
+ */
+export async function applyCertificateReview(params: {
+  tenantId: string;
+  beneficiaryId: string;
+  certificateId: string;
+  shown: readonly CertificateReviewCandidate[];
+  selected: ReadonlySet<ReviewTarget>;
+  mode: "apply" | "dismiss";
+  user: User;
+}): Promise<CertificateReviewResult> {
+  const { tenantId, beneficiaryId, certificateId, shown, mode, user } = params;
+  const selected: ReadonlySet<ReviewTarget> = mode === "apply" ? params.selected : new Set();
+  const benRef = beneficiaryRef(tenantId, beneficiaryId);
+  const certRef = certificateRef(tenantId, beneficiaryId, certificateId);
+  const actor = actorOf(user);
+
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(benRef);
+    const certSnap = await tx.get(certRef);
+    if (!snap.exists() || !certSnap.exists()) throw new Error("利用者または受給者証が見つかりません");
+    const raw = snap.data();
+    const cert = certSnap.data();
+    if (raw.currentCertificateId !== certificateId || cert.certType !== "tsusho") {
+      throw new CertificateReviewOutdatedError();
+    }
+
+    const plan = planCertificateReview({
+      shown,
+      selected,
+      mode,
+      latest: {
+        certType: "tsusho",
+        pages: asPages(cert.pages),
+        record: normalizeBeneficiaryData(beneficiaryId, raw),
+        sections: readChartSections(raw),
+      },
+    });
+
+    const fieldUpdates = buildChartFieldUpdates(plan.applied);
+    if (Object.keys(fieldUpdates).length > 0) {
+      tx.update(benRef, { ...fieldUpdates, updatedBy: actor, updatedAt: serverTimestamp() });
+    }
+
+    const decisions = buildReviewDecisions(plan, selected);
+    if (Object.keys(decisions).length > 0) {
+      const reviewUpdates: Record<string, unknown> = {
+        "chartReview.sourceCertificateId": certificateId,
+        "chartReview.reviewedAt": serverTimestamp(),
+        "chartReview.reviewedBy": actor,
+      };
+      const existing = cert.chartReview as { createdAt?: unknown } | undefined;
+      if (!existing?.createdAt) reviewUpdates["chartReview.createdAt"] = serverTimestamp();
+      for (const [key, decision] of Object.entries(decisions)) {
+        reviewUpdates[`chartReview.decisions.${key}`] = { ...decision, at: serverTimestamp(), by: actor };
+      }
+      tx.update(certRef, reviewUpdates);
+    }
+
+    return {
+      applied: plan.applied.map((c) => c.target),
+      dismissed: plan.dismissed.map((c) => c.target),
+      stale: plan.stale.map((c) => c.target),
+    };
   });
 }

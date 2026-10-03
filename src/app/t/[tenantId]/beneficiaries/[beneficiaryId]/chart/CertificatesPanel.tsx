@@ -5,6 +5,7 @@
 // 受給者証の読み込み・現在／過去の切り替え・画像表示・OCR結果の修正保存・更新フローへの遷移の処理は変えていない。
 // 変更点は (1) 利用者IDを URL ではなく props で受け取る、(2) 氏名の見出しと「一覧に戻る」をカルテ上部へ移した、
 // (3) 選択中の受給者証の要点（CertificateHighlightsCard）を追加した、(4) 未保存の修正があるかを親へ知らせる、の4点。
+// Phase 1-B7：現在の証が通所受給者証（tsusho）の場合だけ、上部にカルテへの反映候補（CertificateReviewCard）を出す。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useRequireAuth } from "@/lib/auth";
@@ -31,6 +32,7 @@ import CertLayoutRenderer from "../../../components/certLayouts";
 import CertImageViewer from "../CertImageViewer";
 import EditPageSwitcher from "../EditPageSwitcher";
 import CertificateHighlightsCard from "./CertificateHighlightsCard";
+import CertificateReviewCard from "./CertificateReviewCard";
 
 // ページ数に満たない旧データ（今回の修正前に登録された受給者など）を、
 // 画像なし・項目未取得の空ページで補って、常にその種別のページ数（getPageCount）件にする。
@@ -262,6 +264,10 @@ export default function CertificatesPanel({ tenantId, beneficiaryId, onDirtyChan
   }
 
   const hasCertificate = certificates.length > 0;
+  // カルテへの反映候補は、現在の証が tsusho のときだけ（adult / child・旧データでは出さない）
+  const reviewCertificate = currentCertificates.find(
+    (c) => c.certType === "tsusho" && !c.isLegacyVirtual && c.id === record.currentCertificateId
+  );
 
   const renderCertificateButton = (cert: CertificateRecord) => {
     const active = cert.id === selectedCertificateId;
@@ -316,6 +322,18 @@ export default function CertificatesPanel({ tenantId, beneficiaryId, onDirtyChan
           </button>
         </div>
       </div>
+
+      {reviewCertificate && (
+        <CertificateReviewCard
+          // 受給者証の修正を保存したときは作り直して、最新の値で候補を出し直す
+          key={`${reviewCertificate.id}:${reviewCertificate.updatedAt?.toMillis() ?? ""}`}
+          tenantId={tenantId}
+          beneficiaryId={beneficiaryId}
+          certificateId={reviewCertificate.id}
+          user={user}
+          onChartUpdated={onSaved}
+        />
+      )}
 
       {!hasCertificate && (
         <section className="rounded-2xl border bg-amber-50 p-5 text-sm text-amber-900">

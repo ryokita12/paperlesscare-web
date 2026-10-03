@@ -23,6 +23,14 @@
 //   - LINE の取込画面は lineCertTypeOptions を通すため、tsusho は表示されない
 //   - 見本画像（public/cert-samples/tsusho）は無いため、ページタブは getSampleImagePath（null）で 404 を出さない
 //   - candidates は引き続き未接続（Phase 1-B7）
+//
+// 【Phase 1-B7 で意図的に更新】
+// OCR → カルテ反映の候補（candidates.ts）を、管理Webの確認フローに接続した。境界を次のように更新した：
+//   - candidates を使ってよいのは src/lib/beneficiaryChart/certificateReview.ts（純粋関数）だけ
+//     （比較・状態の判定を重複実装しない。相対 import "../tsusho/" も検出する）
+//   - 確認カードは管理Webの受給者証タブだけで使い、LINE（src/app/line）からは使わない
+//   - 反映処理（chartStore の applyCertificateReview）は summary / currentCertificateId / status /
+//     supersededBy / pages を書き込まない
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -53,11 +61,11 @@ function read(pathFromRepo: string): string {
   return readFileSync(join(REPO_DIR, pathFromRepo), "utf8");
 }
 
-test("境界：src/lib/tsusho を import してよいアプリのコードは、種別・parser・保存モデルの4ファイルだけ（テストは除く）", () => {
+test("境界：src/lib/tsusho を import してよいアプリのコードは、種別・parser・保存モデル・反映候補の5ファイルだけ（テストは除く）", () => {
   const importers = sourceFiles(SRC_DIR)
     .filter((file) => !file.startsWith(TSUSHO_DIR))
     .filter((file) => !/\.test\.ts$/.test(file))
-    .filter((file) => /from\s+["'][^"']*lib\/tsusho\//.test(readFileSync(file, "utf8")))
+    .filter((file) => /from\s+["'][^"']*(lib|\.\.)\/tsusho\//.test(readFileSync(file, "utf8")))
     .map(rel)
     .sort();
 
@@ -66,16 +74,45 @@ test("境界：src/lib/tsusho を import してよいアプリのコードは、
     "app/t/[tenantId]/lib/firestore/beneficiaries.ts",
     "app/t/[tenantId]/lib/firestore/certificateModel.ts",
     "app/t/[tenantId]/lib/parsers/parseCertText.ts",
+    "lib/beneficiaryChart/certificateReview.ts",
   ]);
 });
 
-test("境界：OCR → カルテ反映の候補（candidates）は、まだアプリから使っていない（Phase 1-B7）", () => {
+test("境界：OCR → カルテ反映の候補（candidates）を使うのは certificateReview.ts だけ（Phase 1-B7）", () => {
   const users = sourceFiles(SRC_DIR)
     .filter((file) => !file.startsWith(TSUSHO_DIR))
     .filter((file) => !/\.test\.ts$/.test(file))
-    .filter((file) => /lib\/tsusho\/candidates/.test(readFileSync(file, "utf8")))
+    .filter((file) => /tsusho\/candidates/.test(readFileSync(file, "utf8")))
     .map(rel);
-  assert.deepEqual(users, []);
+  assert.deepEqual(users, ["lib/beneficiaryChart/certificateReview.ts"]);
+});
+
+test("境界：反映候補の確認カードは管理Webの受給者証タブだけで使い、LINE からは使わない（Phase 1-B7）", () => {
+  const users = sourceFiles(SRC_DIR)
+    .filter((file) => !/\.test\.ts$/.test(file))
+    .filter((file) => /CertificateReviewCard|applyCertificateReview|getCertificateReview|beneficiaryChart\/certificateReview/.test(readFileSync(file, "utf8")))
+    .map(rel)
+    .sort();
+  assert.deepEqual(users, [
+    "app/t/[tenantId]/beneficiaries/[beneficiaryId]/chart/CertificateReviewCard.tsx",
+    "app/t/[tenantId]/beneficiaries/[beneficiaryId]/chart/CertificatesPanel.tsx",
+    "lib/beneficiaryChart/chartStore.ts",
+  ]);
+});
+
+test("境界：反映処理は summary / currentCertificateId / status / supersededBy / pages を書き込まない（Phase 1-B7）", () => {
+  const store = read("src/lib/beneficiaryChart/chartStore.ts");
+  const start = store.indexOf("export async function applyCertificateReview");
+  assert.ok(start > 0);
+  const body = store.slice(start);
+  // 書き込みは tx.update の2か所だけ（利用者doc：カルテの項目＋updatedAt/By、証doc：chartReview）
+  assert.equal((body.match(/tx\.(update|set|delete)\(/g) ?? []).length, 2);
+  assert.match(body, /tx\.update\(benRef, \{ \.\.\.fieldUpdates, updatedBy: actor, updatedAt: serverTimestamp\(\) \}\)/);
+  assert.match(body, /tx\.update\(certRef, reviewUpdates\)/);
+  // （pages は最新の証を読み直すためだけに使う。書き込み先は上の2か所に固定している）
+  for (const key of ["summary", "currentCertificateId:", "status:", "supersededBy", "certificateCount"]) {
+    assert.equal(body.includes(key), false, key);
+  }
 });
 
 test("境界：tsusho は管理Webだけ公開（enabled / adminVisible = true）、LINE は非公開（lineEnabled = false）", () => {
